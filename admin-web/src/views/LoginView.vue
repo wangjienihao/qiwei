@@ -7,7 +7,10 @@
 
       <el-form :model="form" label-width="120px" size="small">
         <el-form-item label="网关地址">
-          <el-input v-model.trim="form.baseUrl" placeholder="https://chat-api.juhebot.com" />
+          <el-input v-model.trim="form.baseUrl" placeholder="/juhebot-api（本地代理）" />
+          <div class="help-text">
+            本地开发建议使用 <code>/juhebot-api</code>，避免浏览器跨域导致 Failed to fetch。
+          </div>
         </el-form-item>
         <el-form-item label="网关路径">
           <el-input v-model.trim="form.endpoint" placeholder="/open/GuidRequest" />
@@ -88,7 +91,8 @@ export default {
     const saved = this.$store.state.session;
     return {
       form: {
-        baseUrl: (saved && saved.baseUrl) || "https://chat-api.juhebot.com",
+        // Use local dev proxy by default to avoid browser CORS issues.
+        baseUrl: (saved && saved.baseUrl) || "/juhebot-api",
         endpoint: (saved && saved.endpoint) || "/open/GuidRequest",
         appKey: (saved && saved.appKey) || "",
         appSecret: (saved && saved.appSecret) || "",
@@ -149,7 +153,7 @@ export default {
         this.lastStatusText = "二维码已获取，请扫码登录。";
         this.$message.success("二维码获取成功");
       } catch (error) {
-        this.$message.error(error.message || "获取二维码失败");
+        this.$message.error(this.toFriendlyError(error));
       } finally {
         this.loadingQrcode = false;
       }
@@ -180,7 +184,7 @@ export default {
         });
         this.lastStatusText = `登录状态：${JSON.stringify(statusPayload.data || {})}`;
       } catch (error) {
-        this.lastStatusText = `状态检查失败：${error.message || "未知错误"}`;
+        this.lastStatusText = `状态检查失败：${this.toFriendlyError(error)}`;
       }
 
       const success = await this.enterSystem({ silent: true });
@@ -224,7 +228,7 @@ export default {
         return true;
       } catch (error) {
         if (!silent) {
-          this.$message.error(error.message || "登录失败");
+          this.$message.error(this.toFriendlyError(error));
         }
         return false;
       } finally {
@@ -232,6 +236,13 @@ export default {
           this.loadingEnter = false;
         }
       }
+    },
+    toFriendlyError(error) {
+      const message = (error && error.message) || "";
+      if (message.includes("Failed to fetch")) {
+        return "请求失败（可能是跨域/CORS）。开发环境请把网关地址填为 /juhebot-api。";
+      }
+      return message || "请求失败";
     },
   },
 };
@@ -278,5 +289,11 @@ export default {
 
 .status-alert {
   margin-top: 12px;
+}
+
+.help-text {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

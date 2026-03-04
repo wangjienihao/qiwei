@@ -195,7 +195,7 @@ export default {
           this.$message.success(`已加载 ${list.length} 个好友`);
         }
       } catch (error) {
-        this.$message.error(error.message || "获取好友列表失败");
+        this.$message.error(this.toFriendlyError(error, "获取好友列表失败"));
       } finally {
         this.loadingContacts = false;
       }
@@ -234,11 +234,18 @@ export default {
         this.sendTip = "发送成功";
         this.$message.success("消息发送成功");
       } catch (error) {
-        this.sendTip = `发送失败：${error.message || "未知错误"}`;
+        this.sendTip = `发送失败：${this.toFriendlyError(error, "未知错误")}`;
         this.$message.error(this.sendTip);
       } finally {
         this.sending = false;
       }
+    },
+    toFriendlyError(error, fallback) {
+      const message = (error && error.message) || "";
+      if (message.includes("Failed to fetch")) {
+        return "请求失败（可能是跨域/CORS）。请确认在本地使用 /juhebot-api 代理。";
+      }
+      return message || fallback;
     },
   },
 };

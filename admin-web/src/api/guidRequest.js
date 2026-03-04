@@ -1,4 +1,4 @@
-const DEFAULT_BASE_URL = "https://chat-api.juhebot.com";
+const DEFAULT_BASE_URL = "/juhebot-api";
 const DEFAULT_ENDPOINT = "/open/GuidRequest";
 
 function normalizeBaseUrl(baseUrl) {

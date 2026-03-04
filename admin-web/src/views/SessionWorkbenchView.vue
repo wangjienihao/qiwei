@@ -1,186 +1,162 @@
 <template>
-  <div>
-    <el-row :gutter="12" class="summary-row">
-      <el-col :span="6">
-        <el-card shadow="never" class="summary-card">
-          <div class="label">联系人</div>
-          <div class="value">{{ contacts.length }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="summary-card">
-          <div class="label">最近会话</div>
-          <div class="value">{{ recentContacts.length }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="summary-card">
-          <div class="label">会话消息</div>
-          <div class="value">{{ messages.length }}</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="summary-card">
-          <div class="label">未读总数</div>
-          <div class="value">{{ unreadTotal }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
+  <div class="chat-workbench">
+    <section class="chat-sidebar">
+      <div class="sidebar-tabs">
+        <el-radio-group v-model="conversationFilter" size="mini">
+          <el-radio-button label="all">全部</el-radio-button>
+          <el-radio-button label="unread">未读</el-radio-button>
+          <el-radio-button label="single">单聊</el-radio-button>
+          <el-radio-button label="group">群聊</el-radio-button>
+        </el-radio-group>
+      </div>
 
-    <el-row :gutter="12">
-      <el-col :span="9">
-        <el-card shadow="never" class="panel-card">
-          <div slot="header" class="head">
-            <span>联系人与最近会话</span>
-            <el-button size="mini" :loading="loadingContacts" @click="loadContacts">
-              刷新
-            </el-button>
-          </div>
+      <div class="sidebar-search">
+        <el-input
+          v-model.trim="keyword"
+          size="small"
+          clearable
+          placeholder="搜索"
+        >
+          <i slot="prefix" class="el-input__icon el-icon-search" />
+        </el-input>
+      </div>
 
-          <el-input
-            v-model.trim="keyword"
-            size="small"
-            clearable
-            placeholder="搜索昵称/ID"
-            class="search"
-          />
-
-          <el-tabs v-model="leftTab" stretch>
-            <el-tab-pane label="最近会话" name="recent">
-              <div v-if="!recentContacts.length" class="empty">
-                <el-empty :image-size="72" description="暂无最近会话" />
-              </div>
-              <div v-else class="recent-list">
-                <div
-                  v-for="contact in recentContacts"
-                  :key="contact.key"
-                  class="recent-item"
-                  :class="{ active: selectedContact && selectedContact.key === contact.key }"
-                  @click="selectContact(contact)"
-                >
-                  <el-avatar :src="contact.avatar" :size="34">
-                    {{ getInitial(contact.nickname) }}
-                  </el-avatar>
-                  <div class="recent-main">
-                    <div class="recent-top">
-                      <span class="name ellipsis">{{ contact.nickname }}</span>
-                      <span class="time">{{ contact.lastTime || "-" }}</span>
-                    </div>
-                    <div class="recent-bottom">
-                      <span class="msg ellipsis">
-                        {{ contact.lastMessage || "暂无最近消息" }}
-                      </span>
-                      <el-badge
-                        v-if="contact.unreadCount > 0"
-                        :value="contact.unreadCount"
-                        :max="99"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="全部联系人" name="contacts">
-              <el-table
-                :data="filteredContacts"
-                height="442"
-                border
-                row-key="key"
-                :highlight-current-row="true"
-                @current-change="selectContact"
-              >
-                <el-table-column label="昵称" min-width="150">
-                  <template slot-scope="{ row }">
-                    <div class="contact-cell">
-                      <el-avatar :src="row.avatar" :size="28">
-                        {{ getInitial(row.nickname) }}
-                      </el-avatar>
-                      <div class="contact-meta">
-                        <span class="ellipsis">{{ row.nickname }}</span>
-                        <small class="sub ellipsis">{{ row.id }}</small>
-                      </div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="lastTime" label="最近时间" width="118" />
-              </el-table>
-            </el-tab-pane>
-          </el-tabs>
-        </el-card>
-      </el-col>
-
-      <el-col :span="15">
-        <el-card shadow="never" class="panel-card">
-          <div slot="header" class="head">
-            <span>会话中心（V2.1）</span>
-            <div class="head-actions">
-              <el-button size="mini" :loading="loadingMessages" @click="loadMessages">
-                拉取消息
-              </el-button>
-              <el-button size="mini" type="primary" :loading="sending" @click="sendText">
-                发送
-              </el-button>
+      <div class="conversation-list">
+        <div v-if="!visibleContacts.length" class="empty-state">
+          <el-empty :image-size="70" description="暂无会话" />
+        </div>
+        <div
+          v-for="contact in visibleContacts"
+          :key="contact.key"
+          class="conversation-item"
+          :class="{ active: selectedContact && selectedContact.key === contact.key }"
+          @click="selectContact(contact)"
+        >
+          <el-avatar :src="contact.avatar" :size="38">
+            {{ getInitial(contact.nickname) }}
+          </el-avatar>
+          <div class="conversation-main">
+            <div class="conversation-title">
+              <span class="name ellipsis">{{ contact.nickname }}</span>
+              <span class="time">{{ contact.lastTime || "-" }}</span>
+            </div>
+            <div class="conversation-sub">
+              <span class="ellipsis">{{ contact.lastMessage || "暂无消息" }}</span>
+              <el-badge
+                v-if="contact.unreadCount > 0"
+                :value="contact.unreadCount"
+                :max="99"
+                class="badge"
+              />
             </div>
           </div>
+        </div>
+      </div>
+    </section>
 
-          <el-form :inline="true" size="small" class="inline-form">
-            <el-form-item label="当前联系人">
-              <el-input
-                :value="selectedContact ? selectedContact.nickname : '未选择'"
-                style="width: 180px"
-                disabled
-              />
-            </el-form-item>
-            <el-form-item label="会话 ID">
-              <el-input
-                v-model.trim="conversationId"
-                style="width: 240px"
-                placeholder="S:788xxxx / R:10xxxx"
-              />
-            </el-form-item>
-            <el-form-item label="快捷语">
-              <el-select
-                v-model="quickTemplate"
-                clearable
-                style="width: 190px"
-                placeholder="选择常用话术"
-                @change="applyQuickTemplate"
-              >
-                <el-option
-                  v-for="item in quickTemplates"
-                  :key="item"
-                  :value="item"
-                  :label="item"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
+    <section class="chat-main">
+      <div class="chat-header">
+        <div class="header-left">
+          <span class="target-name">
+            {{ selectedContact ? selectedContact.nickname : "请选择会话" }}
+          </span>
+          <span class="target-id">{{ conversationId || "-" }}</span>
+        </div>
+        <div class="header-actions">
+          <el-button size="mini" :loading="loadingContacts" @click="loadContacts">
+            刷新会话
+          </el-button>
+          <el-button size="mini" :loading="loadingMessages" @click="loadMessages">
+            拉取消息
+          </el-button>
+          <el-button size="mini" @click="debugVisible = true">调试</el-button>
+        </div>
+      </div>
 
-          <el-input
-            v-model="messageText"
-            type="textarea"
-            :rows="3"
-            placeholder="输入要发送的文本消息"
-            class="compose"
-          />
+      <div ref="msgViewport" class="chat-messages">
+        <el-empty
+          v-if="!selectedContact"
+          :image-size="90"
+          description="左侧选择会话后开始聊天"
+        />
+        <el-empty
+          v-else-if="!messages.length"
+          :image-size="90"
+          description="暂无消息，点击右上角“拉取消息”"
+        />
+        <div v-else class="message-stream">
+          <div
+            v-for="(item, index) in messages"
+            :key="index"
+            class="message-row"
+            :class="{ outgoing: item.isOutgoing }"
+          >
+            <el-avatar
+              v-if="!item.isOutgoing"
+              :src="selectedContact ? selectedContact.avatar : ''"
+              :size="32"
+              class="msg-avatar"
+            >
+              {{ getInitial(item.sender || selectedContact.nickname) }}
+            </el-avatar>
 
-          <el-empty v-if="!messages.length" description="暂无消息，点击“拉取消息”尝试同步" />
-          <div v-else class="msg-list">
-            <div v-for="(item, index) in messages" :key="index" class="msg-item">
-              <div class="msg-top">
-                <span class="sender">{{ item.sender || "未知发送者" }}</span>
-                <span class="time">{{ item.time || "-" }}</span>
+            <div class="msg-body">
+              <div class="msg-meta">
+                <span>{{ item.isOutgoing ? profileName : item.sender || selectedContact.nickname }}</span>
+                <span>{{ item.time || "-" }}</span>
               </div>
-              <div class="content">{{ item.content || "-" }}</div>
+              <div class="msg-bubble">{{ item.content || "-" }}</div>
             </div>
-          </div>
 
-          <el-divider content-position="left">最近接口返回</el-divider>
-          <pre class="json-box">{{ prettyLastResponse }}</pre>
-        </el-card>
-      </el-col>
-    </el-row>
+            <el-avatar
+              v-if="item.isOutgoing"
+              :src="profileAvatar"
+              :size="32"
+              class="msg-avatar"
+            >
+              {{ getInitial(profileName) }}
+            </el-avatar>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-compose">
+        <div class="template-row">
+          <el-tag
+            v-for="template in quickTemplates"
+            :key="template"
+            size="mini"
+            class="template-tag"
+            @click="applyQuickTemplate(template)"
+          >
+            {{ template }}
+          </el-tag>
+        </div>
+        <el-input
+          v-model="messageText"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          placeholder="输入消息，Ctrl + Enter 快速发送"
+          @keydown.native.ctrl.enter="sendText"
+        />
+        <div class="compose-actions">
+          <span class="hint">仅支持文本消息，更多类型后续扩展</span>
+          <el-button type="primary" size="mini" :loading="sending" @click="sendText">
+            发送
+          </el-button>
+        </div>
+      </div>
+    </section>
+
+    <el-drawer
+      title="最近接口返回"
+      :visible.sync="debugVisible"
+      size="32%"
+      direction="rtl"
+    >
+      <pre class="debug-json">{{ prettyLastResponse }}</pre>
+    </el-drawer>
   </div>
 </template>
 
@@ -209,32 +185,145 @@ function asList(value) {
   return [];
 }
 
-function normalizeMessages(rawData) {
-  return asList(rawData).map((item) => ({
-    sender:
-      item.sender_name ||
-      item.nickname ||
-      item.from_name ||
-      item.from ||
-      item.username ||
-      "",
-    content: item.content || item.text || item.msg || item.message || "",
-    time:
-      item.create_time ||
-      item.send_time ||
-      item.time ||
-      item.timestamp ||
-      "",
-  }));
-}
-
-function toTimeScore(text) {
-  if (!text) {
+function toTimestamp(raw) {
+  if (raw === undefined || raw === null || raw === "") {
     return 0;
   }
-  const normalized = String(text).replace(/-/g, "/");
-  const ts = Date.parse(normalized);
-  return Number.isNaN(ts) ? 0 : ts;
+  if (typeof raw === "number") {
+    return raw > 1e12 ? raw : raw * 1000;
+  }
+  const num = Number(raw);
+  if (!Number.isNaN(num) && String(raw).match(/^\d+$/)) {
+    return num > 1e12 ? num : num * 1000;
+  }
+  const parsed = Date.parse(String(raw).replace(/-/g, "/"));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatTime(raw) {
+  const ts = toTimestamp(raw);
+  if (!ts) {
+    return "";
+  }
+  const date = new Date(ts);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${month}-${day} ${hour}:${minute}`;
+}
+
+function pickFirst(item, keys) {
+  for (const key of keys) {
+    const value = item[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function buildMessageContent(item) {
+  const direct = pickFirst(item, [
+    "content",
+    "text",
+    "msg",
+    "message",
+    "body",
+    "display_content",
+  ]);
+  if (typeof direct === "string") {
+    return direct;
+  }
+  if (direct && typeof direct === "object") {
+    return JSON.stringify(direct);
+  }
+  const type = String(
+    item.msg_type || item.message_type || item.type || "",
+  ).toLowerCase();
+  if (!type) {
+    return "";
+  }
+  const map = {
+    image: "[图片]",
+    file: "[文件]",
+    video: "[视频]",
+    voice: "[语音]",
+    link: "[链接]",
+    weapp: "[小程序]",
+  };
+  return map[type] || `[${type}]`;
+}
+
+function inferOutgoing(item, profileName) {
+  const boolKeys = [
+    "from_self",
+    "is_self",
+    "self",
+    "is_send",
+    "is_sender",
+    "send_by_self",
+    "outgoing",
+  ];
+  for (const key of boolKeys) {
+    if (item[key] === true || item[key] === 1 || item[key] === "1") {
+      return true;
+    }
+  }
+
+  const direction = String(item.direction || "").toLowerCase();
+  if (["out", "send", "to", "outgoing"].includes(direction)) {
+    return true;
+  }
+  if (["in", "receive", "from", "incoming"].includes(direction)) {
+    return false;
+  }
+
+  const sender = String(
+    item.sender_name || item.nickname || item.from_name || item.from || "",
+  );
+  if (profileName && sender && sender.includes(profileName)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeMessages(rawData, profileName) {
+  return asList(rawData)
+    .map((item) => {
+      const sender = String(
+        item.sender_name ||
+          item.nickname ||
+          item.from_name ||
+          item.from ||
+          item.username ||
+          "",
+      );
+      const tsRaw = pickFirst(item, [
+        "create_time",
+        "send_time",
+        "time",
+        "timestamp",
+        "created_at",
+      ]);
+      const ts = toTimestamp(tsRaw);
+      return {
+        sender,
+        content: buildMessageContent(item),
+        ts,
+        time: formatTime(tsRaw),
+        isOutgoing: inferOutgoing(item, profileName),
+      };
+    })
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function inferConversationKind(contact) {
+  const id = String(contact.id || "");
+  if (id.startsWith("R:") || id.startsWith("10")) {
+    return "group";
+  }
+  return "single";
 }
 
 export default {
@@ -244,17 +333,17 @@ export default {
       loadingContacts: false,
       loadingMessages: false,
       sending: false,
-      leftTab: "recent",
+      debugVisible: false,
+      conversationFilter: "all",
       keyword: "",
       contacts: [],
       selectedContactKey: "",
       conversationId: "",
       messageText: "",
-      quickTemplate: "",
       quickTemplates: [
         "你好，已收到你的消息。",
-        "这边帮你确认一下，请稍等。",
-        "感谢反馈，我们会尽快处理。",
+        "我这边先帮你确认一下。",
+        "收到，稍后第一时间回复你。",
       ],
       messages: [],
       lastResponse: null,
@@ -264,42 +353,67 @@ export default {
     session() {
       return this.$store.state.session;
     },
-    filteredContacts() {
-      if (!this.keyword) {
-        return this.contacts;
+    profileName() {
+      const profile = this.session && this.session.profile;
+      if (!profile || typeof profile !== "object") {
+        return "我";
       }
-      const key = this.keyword.toLowerCase();
-      return this.contacts.filter((item) => {
-        return (
-          String(item.nickname || "")
-            .toLowerCase()
-            .includes(key) ||
-          String(item.id || "")
-            .toLowerCase()
-            .includes(key)
-        );
-      });
+      return profile.nickname || profile.name || profile.username || "我";
     },
-    recentContacts() {
-      const list = this.filteredContacts.slice();
-      return list
-        .sort((a, b) => {
-          const unreadScore = (b.unreadCount || 0) - (a.unreadCount || 0);
-          if (unreadScore !== 0) {
-            return unreadScore;
-          }
-          return toTimeScore(b.lastTime) - toTimeScore(a.lastTime);
-        })
-        .slice(0, 18);
+    profileAvatar() {
+      const profile = this.session && this.session.profile;
+      if (!profile || typeof profile !== "object") {
+        return "";
+      }
+      return profile.avatar || profile.head_img || profile.headimgurl || "";
     },
     selectedContact() {
       return this.contacts.find((item) => item.key === this.selectedContactKey) || null;
     },
-    unreadTotal() {
-      return this.contacts.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
+    visibleContacts() {
+      const query = this.keyword.toLowerCase();
+      return this.contacts
+        .filter((item) => {
+          if (query) {
+            const matched =
+              String(item.nickname || "")
+                .toLowerCase()
+                .includes(query) ||
+              String(item.id || "")
+                .toLowerCase()
+                .includes(query);
+            if (!matched) {
+              return false;
+            }
+          }
+
+          const kind = inferConversationKind(item);
+          if (this.conversationFilter === "single" && kind !== "single") {
+            return false;
+          }
+          if (this.conversationFilter === "group" && kind !== "group") {
+            return false;
+          }
+          if (this.conversationFilter === "unread" && Number(item.unreadCount || 0) <= 0) {
+            return false;
+          }
+          return true;
+        })
+        .sort((a, b) => {
+          const unreadScore = Number(b.unreadCount || 0) - Number(a.unreadCount || 0);
+          if (unreadScore !== 0) {
+            return unreadScore;
+          }
+          return toTimestamp(b.lastTime) - toTimestamp(a.lastTime);
+        });
     },
     prettyLastResponse() {
       return JSON.stringify(this.lastResponse || {}, null, 2);
+    },
+  },
+  watch: {
+    messages() {
+      this.$nextTick(this.scrollToBottom);
     },
   },
   created() {
@@ -315,20 +429,16 @@ export default {
     async request(path, data) {
       return requestBySession(this.session, path, data);
     },
-    applyQuickTemplate(value) {
-      if (!value) {
+    applyQuickTemplate(template) {
+      this.messageText = template;
+    },
+    scrollToBottom() {
+      if (!this.$refs.msgViewport) {
         return;
       }
-      this.messageText = value;
+      this.$refs.msgViewport.scrollTop = this.$refs.msgViewport.scrollHeight;
     },
-    selectContact(row) {
-      if (!row) {
-        return;
-      }
-      this.selectedContactKey = row.key;
-      this.conversationId = inferConversationId(row);
-    },
-    upsertContactSummary({ message, time }) {
+    touchContactSummary({ message, time }) {
       if (!this.selectedContact) {
         return;
       }
@@ -345,6 +455,14 @@ export default {
       };
       this.contacts = next;
     },
+    async selectContact(contact) {
+      if (!contact) {
+        return;
+      }
+      this.selectedContactKey = contact.key;
+      this.conversationId = inferConversationId(contact);
+      this.loadMessages();
+    },
     async loadContacts() {
       this.loadingContacts = true;
       try {
@@ -359,6 +477,14 @@ export default {
         this.contacts = normalizeContacts(payload.data);
         if (!this.selectedContactKey && this.contacts.length) {
           this.selectContact(this.contacts[0]);
+          return;
+        }
+        if (
+          this.selectedContactKey &&
+          !this.contacts.find((item) => item.key === this.selectedContactKey) &&
+          this.contacts.length
+        ) {
+          this.selectContact(this.contacts[0]);
         }
       } catch (error) {
         this.$message.error(error.message || "同步联系人失败");
@@ -368,7 +494,6 @@ export default {
     },
     async loadMessages() {
       if (!this.conversationId) {
-        this.$message.warning("请先选择联系人或填写会话 ID");
         return;
       }
       this.loadingMessages = true;
@@ -382,13 +507,12 @@ export default {
           this.$message.error(getErrorMessage(payload) || "拉取消息失败");
           return;
         }
-        this.messages = normalizeMessages(payload.data);
+        this.messages = normalizeMessages(payload.data, this.profileName);
         if (!this.messages.length) {
-          this.$message.info("已请求成功，但暂无可展示的消息");
           return;
         }
-        const latest = this.messages[0];
-        this.upsertContactSummary({
+        const latest = this.messages[this.messages.length - 1];
+        this.touchContactSummary({
           message: latest.content,
           time: latest.time,
         });
@@ -400,7 +524,7 @@ export default {
     },
     async sendText() {
       if (!this.conversationId) {
-        this.$message.warning("请先填写会话 ID");
+        this.$message.warning("请先从左侧选择会话");
         return;
       }
       if (!this.messageText.trim()) {
@@ -421,18 +545,19 @@ export default {
           this.$message.error(getErrorMessage(payload) || "发送失败");
           return;
         }
-        this.$message.success("发送成功");
-        this.messages.unshift({
-          sender: "我",
+        const time = formatTime(Date.now());
+        this.messages.push({
+          sender: this.profileName,
           content,
-          time: new Date().toLocaleString(),
+          ts: Date.now(),
+          time,
+          isOutgoing: true,
         });
-        this.upsertContactSummary({
+        this.touchContactSummary({
           message: content,
-          time: new Date().toLocaleString(),
+          time,
         });
         this.messageText = "";
-        this.quickTemplate = "";
       } catch (error) {
         this.$message.error(error.message || "发送失败");
       } finally {
@@ -444,134 +569,228 @@ export default {
 </script>
 
 <style scoped>
-.summary-row {
-  margin-bottom: 12px;
-}
-.summary-card .label {
-  color: #909399;
-  font-size: 12px;
-}
-.summary-card .value {
-  margin-top: 8px;
-  font-size: 22px;
-  font-weight: 700;
-  color: #303133;
-}
-.panel-card {
-  min-height: 650px;
-}
-.head {
+.chat-workbench {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.head-actions {
-  display: flex;
-  gap: 8px;
-}
-.search {
-  margin-bottom: 10px;
-}
-.empty {
-  padding-top: 36px;
-}
-.recent-list {
-  max-height: 442px;
-  overflow: auto;
+  height: calc(100vh - 126px);
+  background: #fff;
   border: 1px solid #ebeef5;
-  border-radius: 6px;
+  border-radius: 8px;
+  overflow: hidden;
 }
-.recent-item {
+
+.chat-sidebar {
+  width: 300px;
+  border-right: 1px solid #ebeef5;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-tabs {
+  padding: 10px;
+  border-bottom: 1px solid #ebeef5;
+  background: #f5f7fa;
+}
+
+.sidebar-search {
+  padding: 10px;
+  border-bottom: 1px solid #f2f3f5;
+}
+
+.conversation-list {
+  flex: 1;
+  overflow: auto;
+}
+
+.conversation-item {
   display: flex;
   gap: 10px;
   padding: 10px;
   border-bottom: 1px solid #f2f3f5;
   cursor: pointer;
 }
-.recent-item:last-child {
-  border-bottom: none;
+
+.conversation-item:hover {
+  background: #f0f7ff;
 }
-.recent-item.active {
-  background: #ecf5ff;
+
+.conversation-item.active {
+  background: #e6f1ff;
 }
-.recent-main {
+
+.conversation-main {
   min-width: 0;
   flex: 1;
 }
-.recent-top,
-.recent-bottom {
+
+.conversation-title,
+.conversation-sub {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.recent-top .name {
+
+.conversation-title .name {
+  font-size: 14px;
   color: #303133;
   font-weight: 500;
 }
-.recent-top .time {
+
+.conversation-title .time {
   font-size: 12px;
   color: #909399;
 }
-.recent-bottom .msg {
-  color: #606266;
+
+.conversation-sub {
+  margin-top: 4px;
   font-size: 12px;
+  color: #909399;
 }
-.contact-cell {
+
+.badge {
+  margin-left: 6px;
+}
+
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-header {
+  height: 56px;
+  border-bottom: 1px solid #ebeef5;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  padding: 0 14px;
 }
-.contact-meta {
+
+.header-left {
   min-width: 0;
 }
-.contact-meta .sub {
-  display: block;
-  color: #909399;
-  font-size: 12px;
-}
-.inline-form {
-  margin-bottom: 8px;
-}
-.compose {
-  margin-bottom: 8px;
-}
-.msg-list {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  max-height: 230px;
-  overflow: auto;
-}
-.msg-item {
-  padding: 10px 12px;
-  border-bottom: 1px solid #f2f3f5;
-}
-.msg-item:last-child {
-  border-bottom: none;
-}
-.msg-top {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: #909399;
-}
-.sender {
-  color: #606266;
-}
-.content {
-  margin-top: 6px;
+
+.target-name {
+  font-size: 16px;
+  font-weight: 500;
   color: #303133;
-  line-height: 1.5;
 }
-.json-box {
+
+.target-id {
+  margin-left: 8px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  background: #f8f9fb;
+}
+
+.message-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.message-row.outgoing {
+  justify-content: flex-end;
+}
+
+.message-row.outgoing .msg-body {
+  align-items: flex-end;
+}
+
+.msg-avatar {
+  flex-shrink: 0;
+}
+
+.msg-body {
+  display: flex;
+  flex-direction: column;
+  max-width: 70%;
+}
+
+.msg-meta {
+  display: flex;
+  gap: 10px;
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.msg-bubble {
+  background: #fff;
+  color: #303133;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.message-row.outgoing .msg-bubble {
+  background: #d9ecff;
+  border-color: #b3d8ff;
+}
+
+.chat-compose {
+  border-top: 1px solid #ebeef5;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.template-row {
+  margin-bottom: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.template-tag {
+  cursor: pointer;
+}
+
+.compose-actions {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hint {
+  color: #909399;
+  font-size: 12px;
+}
+
+.empty-state {
+  padding: 30px 0;
+}
+
+.debug-json {
   background: #1f2d3d;
   color: #d3dce6;
-  padding: 10px;
-  border-radius: 4px;
-  max-height: 150px;
-  overflow: auto;
+  border-radius: 6px;
+  padding: 12px;
   font-size: 12px;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
 }
+
 .ellipsis {
   overflow: hidden;
   white-space: nowrap;

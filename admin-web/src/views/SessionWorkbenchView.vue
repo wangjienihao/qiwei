@@ -4,6 +4,7 @@
       <div class="sidebar-tabs">
         <el-radio-group v-model="conversationFilter" size="mini">
           <el-radio-button label="all">全部</el-radio-button>
+          <el-radio-button label="pending">待回复</el-radio-button>
           <el-radio-button label="unread">未读</el-radio-button>
           <el-radio-button label="single">单聊</el-radio-button>
           <el-radio-button label="group">群聊</el-radio-button>
@@ -15,7 +16,7 @@
           v-model.trim="keyword"
           size="small"
           clearable
-          placeholder="搜索"
+          placeholder="搜索会话"
         >
           <i slot="prefix" class="el-input__icon el-icon-search" />
         </el-input>
@@ -42,12 +43,22 @@
             </div>
             <div class="conversation-sub">
               <span class="ellipsis">{{ contact.lastMessage || "暂无消息" }}</span>
-              <el-badge
-                v-if="contact.unreadCount > 0"
-                :value="contact.unreadCount"
-                :max="99"
-                class="badge"
-              />
+              <div class="badges">
+                <el-tag
+                  v-if="isContactPending(contact)"
+                  size="mini"
+                  type="warning"
+                  effect="plain"
+                >
+                  待回复
+                </el-tag>
+                <el-badge
+                  v-if="contact.unreadCount > 0"
+                  :value="contact.unreadCount"
+                  :max="99"
+                  class="badge"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -61,18 +72,27 @@
             {{ selectedContact ? selectedContact.nickname : "请选择会话" }}
           </span>
           <span class="target-id">{{ conversationId || "-" }}</span>
+          <el-tag
+            v-if="selectedContact && isContactPending(selectedContact)"
+            size="mini"
+            type="warning"
+            effect="plain"
+          >
+            待回复
+          </el-tag>
         </div>
         <div class="header-actions">
           <el-button size="mini" :disabled="!conversationId" @click="copyConversationId">
             复制会话ID
           </el-button>
-          <el-button
-            size="mini"
-            :disabled="!selectedContact"
-            :loading="contactDetailLoading"
-            @click="syncContactDetail"
-          >
-            同步资料
+          <el-button size="mini" :disabled="!selectedContact" @click="openDetailDrawer">
+            详情
+          </el-button>
+          <el-button size="mini" :disabled="!selectedContact" @click="nextPendingConversation">
+            下一条待回复
+          </el-button>
+          <el-button size="mini" :disabled="!selectedContact" @click="markCurrentAsRead">
+            标记已读
           </el-button>
           <el-button size="mini" :loading="loadingContacts" @click="loadContacts">
             刷新会话
@@ -80,155 +100,162 @@
           <el-button size="mini" :loading="loadingMessages" @click="loadMessages">
             拉取消息
           </el-button>
-          <el-button size="mini" :disabled="!messages.length" @click="clearMessages">
-            清空窗口
-          </el-button>
           <el-button size="mini" @click="debugVisible = true">调试</el-button>
         </div>
       </div>
 
-      <div class="chat-body">
-        <div class="chat-thread">
-          <div ref="msgViewport" class="chat-messages">
-            <el-empty
-              v-if="!selectedContact"
-              :image-size="90"
-              description="左侧选择会话后开始聊天"
-            />
-            <el-empty
-              v-else-if="!messages.length"
-              :image-size="90"
-              description="暂无消息，点击右上角“拉取消息”"
-            />
-            <div v-else class="message-stream">
-              <template v-for="item in displayMessages">
-                <div v-if="item.kind === 'divider'" :key="item.key" class="time-divider">
-                  <span>{{ item.label }}</span>
-                </div>
-                <div
-                  v-else
-                  :key="item.key"
-                  class="message-row"
-                  :class="{ outgoing: item.isOutgoing }"
-                >
-                  <el-avatar
-                    v-if="!item.isOutgoing"
-                    :src="selectedContact ? selectedContact.avatar : ''"
-                    :size="32"
-                    class="msg-avatar"
-                  >
-                    {{ getInitial(item.sender || selectedContact.nickname) }}
-                  </el-avatar>
-
-                  <div class="msg-body">
-                    <div class="msg-meta">
-                      <span>
-                        {{ item.isOutgoing ? profileName : item.sender || selectedContact.nickname }}
-                      </span>
-                      <span>{{ item.time || "-" }}</span>
-                    </div>
-                    <div class="msg-bubble">{{ item.content || "-" }}</div>
-                  </div>
-
-                  <el-avatar
-                    v-if="item.isOutgoing"
-                    :src="profileAvatar"
-                    :size="32"
-                    class="msg-avatar"
-                  >
-                    {{ getInitial(profileName) }}
-                  </el-avatar>
-                </div>
-              </template>
+      <div ref="msgViewport" class="chat-messages">
+        <el-empty
+          v-if="!selectedContact"
+          :image-size="90"
+          description="左侧选择会话后开始聊天"
+        />
+        <el-empty
+          v-else-if="!messages.length"
+          :image-size="90"
+          description="暂无消息，点击右上角“拉取消息”"
+        />
+        <div v-else class="message-stream">
+          <template v-for="item in displayMessages">
+            <div v-if="item.kind === 'divider'" :key="item.key" class="time-divider">
+              <span>{{ item.label }}</span>
             </div>
-          </div>
-
-          <div class="chat-compose">
-            <div class="template-row">
-              <el-tag
-                v-for="template in quickTemplates"
-                :key="template"
-                size="mini"
-                class="template-tag"
-                @click="applyQuickTemplate(template)"
+            <div
+              v-else
+              :key="item.key"
+              class="message-row"
+              :class="{ outgoing: item.isOutgoing }"
+            >
+              <el-avatar
+                v-if="!item.isOutgoing"
+                :src="selectedContact ? selectedContact.avatar : ''"
+                :size="32"
+                class="msg-avatar"
               >
-                {{ template }}
-              </el-tag>
+                {{ getInitial(item.sender || selectedContact.nickname) }}
+              </el-avatar>
+
+              <div class="msg-body">
+                <div class="msg-meta">
+                  <span>
+                    {{ item.isOutgoing ? profileName : item.sender || selectedContact.nickname }}
+                  </span>
+                  <span>{{ item.time || "-" }}</span>
+                </div>
+                <div class="msg-bubble">{{ item.content || "-" }}</div>
+              </div>
+
+              <el-avatar
+                v-if="item.isOutgoing"
+                :src="profileAvatar"
+                :size="32"
+                class="msg-avatar"
+              >
+                {{ getInitial(profileName) }}
+              </el-avatar>
             </div>
-            <el-input
-              v-model="messageText"
-              type="textarea"
-              :rows="3"
-              resize="none"
-              placeholder="输入消息，Ctrl + Enter 快速发送"
-              @keydown.native.ctrl.enter="sendText"
-            />
-            <div class="compose-actions">
-              <span class="hint">仅支持文本消息，更多类型后续扩展</span>
-              <el-button type="primary" size="mini" :loading="sending" @click="sendText">
-                发送
-              </el-button>
-            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="chat-compose">
+        <div class="template-row">
+          <el-tag
+            v-for="template in quickTemplates"
+            :key="template"
+            size="mini"
+            class="template-tag"
+            @click="applyQuickTemplate(template)"
+          >
+            {{ template }}
+          </el-tag>
+        </div>
+        <el-input
+          v-model="messageText"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          placeholder="输入消息，Ctrl + Enter 快速发送"
+          @keydown.native.ctrl.enter="sendText"
+        />
+        <div class="compose-actions">
+          <span class="hint">仅支持文本消息，更多类型后续扩展</span>
+          <el-button type="primary" size="mini" :loading="sending" @click="sendText">
+            发送
+          </el-button>
+        </div>
+      </div>
+    </section>
+
+    <el-drawer
+      title="会话详情"
+      :visible.sync="detailVisible"
+      size="30%"
+      direction="rtl"
+    >
+      <div v-if="!selectedContact" class="detail-empty">
+        <el-empty :image-size="74" description="未选择会话" />
+      </div>
+      <template v-else>
+        <div class="detail-profile">
+          <el-avatar :src="selectedContact.avatar" :size="54">
+            {{ getInitial(selectedContact.nickname) }}
+          </el-avatar>
+          <div class="detail-main">
+            <div class="nickname">{{ selectedContact.nickname }}</div>
+            <div class="subid">{{ selectedContact.id }}</div>
           </div>
         </div>
 
-        <aside class="chat-detail">
-          <div class="detail-head">会话信息</div>
-          <div v-if="!selectedContact" class="detail-empty">
-            <el-empty :image-size="72" description="未选择会话" />
+        <div class="detail-actions">
+          <el-button
+            size="mini"
+            :loading="contactDetailLoading"
+            @click="syncContactDetail"
+          >
+            同步资料
+          </el-button>
+        </div>
+
+        <div class="detail-block">
+          <div class="block-title">会话摘要</div>
+          <div class="detail-item">
+            <span>会话类型</span>
+            <el-tag size="mini" :type="selectedContactKind === 'group' ? 'warning' : 'success'">
+              {{ selectedContactKind === "group" ? "群聊" : "单聊" }}
+            </el-tag>
           </div>
-          <template v-else>
-            <div class="detail-profile">
-              <el-avatar :src="selectedContact.avatar" :size="54">
-                {{ getInitial(selectedContact.nickname) }}
-              </el-avatar>
-              <div class="detail-main">
-                <div class="nickname">{{ selectedContact.nickname }}</div>
-                <div class="subid">{{ selectedContact.id }}</div>
-              </div>
-            </div>
+          <div class="detail-item">
+            <span>未读数</span>
+            <b>{{ selectedContact.unreadCount || 0 }}</b>
+          </div>
+          <div class="detail-item">
+            <span>最近时间</span>
+            <b>{{ selectedContact.lastTime || "-" }}</b>
+          </div>
+        </div>
 
-            <div class="detail-block">
-              <div class="block-title">会话摘要</div>
-              <div class="detail-item">
-                <span>会话类型</span>
-                <el-tag size="mini" :type="selectedContactKind === 'group' ? 'warning' : 'success'">
-                  {{ selectedContactKind === "group" ? "群聊" : "单聊" }}
-                </el-tag>
-              </div>
-              <div class="detail-item">
-                <span>未读数</span>
-                <b>{{ selectedContact.unreadCount || 0 }}</b>
-              </div>
-              <div class="detail-item">
-                <span>最近时间</span>
-                <b>{{ selectedContact.lastTime || "-" }}</b>
-              </div>
-            </div>
+        <div class="detail-block">
+          <div class="block-title">标签</div>
+          <div class="tag-list">
+            <el-tag
+              v-for="tag in selectedContactTags"
+              :key="tag.id"
+              size="mini"
+              class="mini-gap"
+            >
+              {{ tag.name }}
+            </el-tag>
+            <span v-if="!selectedContactTags.length" class="hint">暂无标签</span>
+          </div>
+        </div>
 
-            <div class="detail-block">
-              <div class="block-title">标签</div>
-              <div class="tag-list">
-                <el-tag
-                  v-for="tag in selectedContactTags"
-                  :key="tag.id"
-                  size="mini"
-                  class="mini-gap"
-                >
-                  {{ tag.name }}
-                </el-tag>
-                <span v-if="!selectedContactTags.length" class="hint">暂无标签</span>
-              </div>
-            </div>
-
-            <div class="detail-block">
-              <div class="block-title">接口详情</div>
-              <pre class="detail-json">{{ prettyContactDetail }}</pre>
-            </div>
-          </template>
-        </aside>
-      </div>
-    </section>
+        <div class="detail-block">
+          <div class="block-title">接口详情</div>
+          <pre class="detail-json">{{ prettyContactDetail }}</pre>
+        </div>
+      </template>
+    </el-drawer>
 
     <el-drawer
       title="最近接口返回"
@@ -453,6 +480,8 @@ export default {
       loadingMessages: false,
       sending: false,
       debugVisible: false,
+      detailVisible: false,
+      contactDetailLoading: false,
       conversationFilter: "all",
       keyword: "",
       contacts: [],
@@ -465,10 +494,10 @@ export default {
         "收到，稍后第一时间回复你。",
       ],
       messages: [],
-      contactDetailLoading: false,
       contactDetail: null,
       assignmentMap: {},
       tagNameMap: {},
+      pendingMap: {},
       lastResponse: null,
     };
   },
@@ -574,9 +603,17 @@ export default {
           if (this.conversationFilter === "unread" && Number(item.unreadCount || 0) <= 0) {
             return false;
           }
+          if (this.conversationFilter === "pending" && !this.isContactPending(item)) {
+            return false;
+          }
           return true;
         })
         .sort((a, b) => {
+          const pendingScore =
+            Number(this.isContactPending(b)) - Number(this.isContactPending(a));
+          if (pendingScore !== 0) {
+            return pendingScore;
+          }
           const unreadScore = Number(b.unreadCount || 0) - Number(a.unreadCount || 0);
           if (unreadScore !== 0) {
             return unreadScore;
@@ -611,6 +648,15 @@ export default {
     async request(path, data) {
       return requestBySession(this.session, path, data);
     },
+    isContactPending(contact) {
+      if (!contact) {
+        return false;
+      }
+      if (Number(contact.unreadCount || 0) > 0) {
+        return true;
+      }
+      return Boolean(this.pendingMap[contact.key]);
+    },
     restoreAssignmentMap() {
       try {
         const raw = window.localStorage.getItem(TAG_ASSIGNMENT_STORAGE_KEY);
@@ -642,7 +688,7 @@ export default {
         });
         this.tagNameMap = map;
       } catch (error) {
-        // Ignore tag load errors in chat view.
+        // ignore
       }
     },
     applyQuickTemplate(template) {
@@ -659,8 +705,15 @@ export default {
         this.$message.warning("复制失败，请手动复制");
       }
     },
-    clearMessages() {
-      this.messages = [];
+    openDetailDrawer() {
+      if (!this.selectedContact) {
+        this.$message.warning("请先选择会话");
+        return;
+      }
+      this.detailVisible = true;
+      if (!this.contactDetail) {
+        this.syncContactDetail();
+      }
     },
     async syncContactDetail() {
       if (!this.selectedContact) {
@@ -689,13 +742,19 @@ export default {
         this.contactDetailLoading = false;
       }
     },
+    markPendingState(contactKey, pending) {
+      this.pendingMap = {
+        ...this.pendingMap,
+        [contactKey]: Boolean(pending),
+      };
+    },
     scrollToBottom() {
       if (!this.$refs.msgViewport) {
         return;
       }
       this.$refs.msgViewport.scrollTop = this.$refs.msgViewport.scrollHeight;
     },
-    touchContactSummary({ message, time }) {
+    touchContactSummary({ message, time, unreadCount }) {
       if (!this.selectedContact) {
         return;
       }
@@ -708,7 +767,8 @@ export default {
         ...next[idx],
         lastMessage: message || next[idx].lastMessage,
         lastTime: time || next[idx].lastTime,
-        unreadCount: 0,
+        unreadCount:
+          unreadCount === undefined ? next[idx].unreadCount : Number(unreadCount || 0),
       };
       this.contacts = next;
     },
@@ -719,6 +779,42 @@ export default {
       this.selectedContactKey = contact.key;
       this.conversationId = inferConversationId(contact);
       this.loadMessages();
+    },
+    async nextPendingConversation() {
+      const list = this.contacts
+        .filter((item) => this.isContactPending(item))
+        .sort((a, b) => toTimestamp(b.lastTime) - toTimestamp(a.lastTime));
+      if (!list.length) {
+        this.$message.info("当前没有待回复会话");
+        return;
+      }
+      const currentIndex = list.findIndex((item) => item.key === this.selectedContactKey);
+      const next = list[(currentIndex + 1) % list.length];
+      this.selectContact(next);
+    },
+    async markCurrentAsRead() {
+      if (!this.selectedContact || !this.conversationId) {
+        return;
+      }
+      try {
+        const payload = await this.request("/msg/report_unread", {
+          guid: this.session.guid,
+          conversation_id: this.conversationId,
+          unread_count: 0,
+        });
+        this.lastResponse = payload;
+        if (hasBusinessError(payload)) {
+          this.$message.warning(getErrorMessage(payload) || "标记已读失败");
+          return;
+        }
+      } catch (error) {
+        // swallow API error but still update local status for better UX
+      }
+      this.touchContactSummary({
+        unreadCount: 0,
+      });
+      this.markPendingState(this.selectedContact.key, false);
+      this.$message.success("已标记已读");
     },
     async loadContacts() {
       this.loadingContacts = true;
@@ -731,7 +827,16 @@ export default {
           this.$message.error(getErrorMessage(payload) || "同步联系人失败");
           return;
         }
-        this.contacts = normalizeContacts(payload.data);
+        const nextContacts = normalizeContacts(payload.data);
+        // Keep pending state for contacts still existing in list.
+        const nextPending = {};
+        nextContacts.forEach((item) => {
+          if (this.pendingMap[item.key]) {
+            nextPending[item.key] = this.pendingMap[item.key];
+          }
+        });
+        this.pendingMap = nextPending;
+        this.contacts = nextContacts;
         if (!this.selectedContactKey && this.contacts.length) {
           this.selectContact(this.contacts[0]);
           return;
@@ -773,6 +878,12 @@ export default {
           message: latest.content,
           time: latest.time,
         });
+        if (this.selectedContact) {
+          this.markPendingState(
+            this.selectedContact.key,
+            !latest.isOutgoing && Number(this.selectedContact.unreadCount || 0) === 0,
+          );
+        }
       } catch (error) {
         this.$message.error(error.message || "拉取消息失败");
       } finally {
@@ -802,18 +913,21 @@ export default {
           this.$message.error(getErrorMessage(payload) || "发送失败");
           return;
         }
-        const time = formatTime(Date.now());
+        const nowTs = Date.now();
+        const time = formatTime(nowTs);
         this.messages.push({
           sender: this.profileName,
           content,
-          ts: Date.now(),
+          ts: nowTs,
           time,
           isOutgoing: true,
         });
         this.touchContactSummary({
           message: content,
           time,
+          unreadCount: 0,
         });
+        this.markPendingState(this.selectedContact.key, false);
         this.messageText = "";
         this.scrollToBottom();
       } catch (error) {
@@ -837,7 +951,7 @@ export default {
 }
 
 .chat-sidebar {
-  width: 300px;
+  width: 308px;
   border-right: 1px solid #ebeef5;
   background: #fafafa;
   display: flex;
@@ -855,7 +969,7 @@ export default {
   border-radius: 4px;
   background: transparent;
   color: #606266;
-  padding: 6px 10px;
+  padding: 6px 8px;
   box-shadow: none;
 }
 
@@ -921,108 +1035,20 @@ export default {
   color: #909399;
 }
 
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .badge {
-  margin-left: 6px;
+  margin-left: 2px;
 }
 
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-}
-
-.chat-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.chat-thread {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.chat-detail {
-  width: 250px;
-  border-left: 1px solid #ebeef5;
-  background: #fcfcfd;
-  padding: 10px;
-  overflow: auto;
-}
-
-.detail-head {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 10px;
-}
-
-.detail-empty {
-  padding-top: 40px;
-}
-
-.detail-profile {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.detail-main {
-  min-width: 0;
-}
-
-.nickname {
-  font-size: 14px;
-  color: #303133;
-  font-weight: 500;
-}
-
-.subid {
-  color: #909399;
-  font-size: 12px;
-  margin-top: 3px;
-  word-break: break-all;
-}
-
-.detail-block {
-  margin-top: 14px;
-}
-
-.block-title {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 8px;
-}
-
-.detail-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: #606266;
-}
-
-.tag-list {
-  min-height: 24px;
-}
-
-.mini-gap {
-  margin-right: 6px;
-  margin-bottom: 4px;
-}
-
-.detail-json {
-  margin: 0;
-  padding: 8px;
-  border-radius: 4px;
-  background: #f5f7fa;
-  color: #606266;
-  font-size: 11px;
-  max-height: 200px;
-  overflow: auto;
 }
 
 .chat-header {
@@ -1036,6 +1062,9 @@ export default {
 
 .header-left {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .target-name {
@@ -1045,7 +1074,6 @@ export default {
 }
 
 .target-id {
-  margin-left: 8px;
   color: #909399;
   font-size: 12px;
 }
@@ -1159,6 +1187,76 @@ export default {
 
 .empty-state {
   padding: 30px 0;
+}
+
+.detail-empty {
+  padding-top: 42px;
+}
+
+.detail-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-main {
+  min-width: 0;
+}
+
+.nickname {
+  font-size: 14px;
+  color: #303133;
+  font-weight: 500;
+}
+
+.subid {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 3px;
+  word-break: break-all;
+}
+
+.detail-actions {
+  margin-top: 10px;
+}
+
+.detail-block {
+  margin-top: 14px;
+}
+
+.block-title {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.tag-list {
+  min-height: 24px;
+}
+
+.mini-gap {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.detail-json {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 11px;
+  max-height: 250px;
+  overflow: auto;
 }
 
 .debug-json {

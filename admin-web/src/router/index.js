@@ -6,6 +6,11 @@ import AdminLayout from "../layouts/AdminLayout.vue";
 import LoginView from "../views/LoginView.vue";
 import DashboardView from "../views/DashboardView.vue";
 import ContactsChatView from "../views/ContactsChatView.vue";
+import SessionWorkbenchView from "../views/SessionWorkbenchView.vue";
+import GroupOpsView from "../views/GroupOpsView.vue";
+import TagOpsView from "../views/TagOpsView.vue";
+import MomentsOpsView from "../views/MomentsOpsView.vue";
+import AutomationCenterView from "../views/AutomationCenterView.vue";
 
 Vue.use(VueRouter);
 
@@ -35,7 +40,37 @@ const routes = [
         path: "chat",
         name: "ContactsChat",
         component: ContactsChatView,
-        meta: { title: "好友消息" },
+        meta: { title: "好友消息（V1）" },
+      },
+      {
+        path: "v2/workbench",
+        name: "SessionWorkbench",
+        component: SessionWorkbenchView,
+        meta: { title: "会话中心（V2）" },
+      },
+      {
+        path: "v2/groups",
+        name: "GroupOps",
+        component: GroupOpsView,
+        meta: { title: "群运营（V2）" },
+      },
+      {
+        path: "v3/tags",
+        name: "TagOps",
+        component: TagOpsView,
+        meta: { title: "标签运营（V3）" },
+      },
+      {
+        path: "v3/moments",
+        name: "MomentsOps",
+        component: MomentsOpsView,
+        meta: { title: "朋友圈运营（V3）" },
+      },
+      {
+        path: "v3/automation",
+        name: "AutomationCenter",
+        component: AutomationCenterView,
+        meta: { title: "自动化中心（V3）" },
       },
     ],
   },

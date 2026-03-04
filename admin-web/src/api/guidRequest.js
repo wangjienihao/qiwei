@@ -56,6 +56,9 @@ export function getErrorMessage(payload) {
   }
 
   const obj = payload;
+  if (typeof obj.err_msg === "string" && obj.err_msg) {
+    return obj.err_msg;
+  }
   if (typeof obj.error_message === "string" && obj.error_message) {
     return obj.error_message;
   }
@@ -73,6 +76,9 @@ export function getErrorCode(payload) {
     return 0;
   }
   const obj = payload;
+  if (typeof obj.err_code === "number") {
+    return obj.err_code;
+  }
   if (typeof obj.error_code === "number") {
     return obj.error_code;
   }

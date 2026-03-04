@@ -1,11 +1,13 @@
 <template>
   <el-container class="admin-layout">
-    <el-aside :width="isSidebarCollapsed ? '64px' : '220px'" class="layout-aside">
+    <el-aside :width="isSidebarCollapsed ? '64px' : '228px'" class="layout-aside">
       <div class="brand">{{ isSidebarCollapsed ? "管" : "管理后台" }}</div>
       <el-menu
         :default-active="$route.path"
+        :default-openeds="['v1', 'v2', 'v3']"
         class="menu"
         :collapse="isSidebarCollapsed"
+        unique-opened
         background-color="#001529"
         text-color="#bfcbd9"
         active-text-color="#409eff"
@@ -15,10 +17,30 @@
           <i class="el-icon-data-analysis" />
           <span slot="title">仪表盘</span>
         </el-menu-item>
-        <el-menu-item index="/chat">
-          <i class="el-icon-chat-dot-round" />
-          <span slot="title">好友消息</span>
-        </el-menu-item>
+        <el-submenu index="v1">
+          <template slot="title">
+            <i class="el-icon-message" />
+            <span>V1 基础功能</span>
+          </template>
+          <el-menu-item index="/chat">好友消息</el-menu-item>
+        </el-submenu>
+        <el-submenu index="v2">
+          <template slot="title">
+            <i class="el-icon-s-cooperation" />
+            <span>V2 运营效率</span>
+          </template>
+          <el-menu-item index="/v2/workbench">会话中心</el-menu-item>
+          <el-menu-item index="/v2/groups">群运营</el-menu-item>
+        </el-submenu>
+        <el-submenu index="v3">
+          <template slot="title">
+            <i class="el-icon-s-opportunity" />
+            <span>V3 增长自动化</span>
+          </template>
+          <el-menu-item index="/v3/tags">标签运营</el-menu-item>
+          <el-menu-item index="/v3/moments">朋友圈运营</el-menu-item>
+          <el-menu-item index="/v3/automation">自动化中心</el-menu-item>
+        </el-submenu>
       </el-menu>
     </el-aside>
 
@@ -118,6 +140,7 @@ export default {
 
 .menu {
   border-right: none;
+  user-select: none;
 }
 
 .layout-header {

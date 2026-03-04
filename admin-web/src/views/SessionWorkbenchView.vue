@@ -421,12 +421,12 @@ function collectValuesByKeys(item, keys) {
   return values;
 }
 
-function addCandidateVariants(set, value) {
+function addConversationCandidateVariants(set, value) {
   if (!set) {
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((item) => addCandidateVariants(set, item));
+    value.forEach((item) => addConversationCandidateVariants(set, item));
     return;
   }
   if (value === undefined || value === null || value === "") {
@@ -447,6 +447,27 @@ function addCandidateVariants(set, value) {
   }
 }
 
+function addIdentityCandidateVariants(set, value) {
+  if (!set) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => addIdentityCandidateVariants(set, item));
+    return;
+  }
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return;
+  }
+  set.add(text);
+  if (/^(S:|R:)/i.test(text)) {
+    set.add(stripConversationPrefix(text));
+  }
+}
+
 function hasTargetMatch(values, targetSet) {
   if (!targetSet || !targetSet.size || !Array.isArray(values) || !values.length) {
     return false;
@@ -464,19 +485,16 @@ function collectConversationCandidates(item) {
     "conversation_id",
     "conversationId",
     "conv_id",
-    "talker_id",
-    "chat_id",
-    "room_id",
-    "group_id",
     "to_conversation_id",
     "from_conversation_id",
     "conversation.id",
     "conversation.conversation_id",
     "session.conversation_id",
     "chat.conversation_id",
+    "room_id",
   ]);
   const set = new Set();
-  values.forEach((value) => addCandidateVariants(set, value));
+  values.forEach((value) => addConversationCandidateVariants(set, value));
   return Array.from(set);
 }
 
@@ -512,25 +530,54 @@ function collectParticipantCandidates(item) {
     "to.user_id",
   ]);
   const set = new Set();
-  values.forEach((value) => addCandidateVariants(set, value));
+  values.forEach((value) => addIdentityCandidateVariants(set, value));
   return Array.from(set);
 }
 
-function buildContactTargetSet(contact, conversationId) {
-  const set = createConversationTargetSet(conversationId);
+function collectSenderCandidates(item) {
+  const values = collectValuesByKeys(item, [
+    "from_id",
+    "sender_id",
+    "sender_user_id",
+    "sender_userid",
+    "sender_wxid",
+    "from_user_id",
+    "from_userid",
+    "from.id",
+    "sender.id",
+    "from.user_id",
+  ]);
+  const set = new Set();
+  values.forEach((value) => addIdentityCandidateVariants(set, value));
+  return Array.from(set);
+}
+
+function collectReceiverCandidates(item) {
+  const values = collectValuesByKeys(item, [
+    "to_id",
+    "target_id",
+    "peer_id",
+    "receiver_id",
+    "receive_id",
+    "to_user_id",
+    "to_userid",
+    "to.id",
+    "receiver.id",
+    "to.user_id",
+  ]);
+  const set = new Set();
+  values.forEach((value) => addIdentityCandidateVariants(set, value));
+  return Array.from(set);
+}
+
+function buildContactPeerTargetSet(contact) {
+  const set = new Set();
   if (!contact || typeof contact !== "object") {
     return set;
   }
-  addCandidateVariants(set, contact.id);
+  addIdentityCandidateVariants(set, contact.id);
   const raw = contact.raw && typeof contact.raw === "object" ? contact.raw : {};
   collectValuesByKeys(raw, [
-    "conversation_id",
-    "conversationId",
-    "conv_id",
-    "chat_id",
-    "room_id",
-    "group_id",
-    "talker_id",
     "id",
     "user_id",
     "userid",
@@ -543,11 +590,11 @@ function buildContactTargetSet(contact, conversationId) {
     "contact_id",
     "contactId",
     "friend_id",
-    "from_id",
-    "to_id",
     "profile.user_id",
     "profile.external_user_id",
-  ]).forEach((value) => addCandidateVariants(set, value));
+    "profile.userid",
+    "profile.wxid",
+  ]).forEach((value) => addIdentityCandidateVariants(set, value));
   return set;
 }
 
@@ -556,16 +603,151 @@ function hasMessageHints(message) {
     (Array.isArray(message.conversationCandidates) &&
       message.conversationCandidates.length > 0) ||
     (Array.isArray(message.participantCandidates) &&
-      message.participantCandidates.length > 0)
+      message.participantCandidates.length > 0) ||
+    (Array.isArray(message.senderCandidates) && message.senderCandidates.length > 0) ||
+    (Array.isArray(message.receiverCandidates) && message.receiverCandidates.length > 0)
   );
 }
 
-function messageBelongsToConversation(message, conversationTargetSet, contactTargetSet) {
+function normalizeName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function buildContactNameSet(contact) {
+  const set = new Set();
+  if (!contact || typeof contact !== "object") {
+    return set;
+  }
+  [
+    contact.nickname,
+    contact.name,
+    contact.remark,
+    contact.alias,
+  ].forEach((value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      set.add(normalized);
+    }
+  });
+  const raw = contact.raw && typeof contact.raw === "object" ? contact.raw : {};
+  collectValuesByKeys(raw, [
+    "nickname",
+    "name",
+    "remark",
+    "alias",
+    "display_name",
+    "contact_name",
+    "wx_nickname",
+  ]).forEach((value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      set.add(normalized);
+    }
+  });
+  return set;
+}
+
+function buildSelfTargetSet(session) {
+  const set = new Set();
+  if (!session || typeof session !== "object") {
+    return set;
+  }
+  collectValuesByKeys(session, [
+    "guid",
+    "uid",
+    "id",
+    "user_id",
+    "userid",
+    "wxid",
+    "profile.id",
+    "profile.uid",
+    "profile.guid",
+    "profile.user_id",
+    "profile.userid",
+    "profile.external_user_id",
+    "profile.external_userid",
+    "profile.wxid",
+  ]).forEach((value) => addIdentityCandidateVariants(set, value));
+  return set;
+}
+
+function buildSelfNameSet(session, profileName) {
+  const set = new Set();
+  const addName = (value) => {
+    const normalized = normalizeName(value);
+    if (normalized) {
+      set.add(normalized);
+    }
+  };
+  addName(profileName);
+  if (!session || typeof session !== "object") {
+    return set;
+  }
+  collectValuesByKeys(session, [
+    "name",
+    "nickname",
+    "username",
+    "profile.name",
+    "profile.nickname",
+    "profile.username",
+    "profile.remark",
+    "profile.alias",
+  ]).forEach(addName);
+  return set;
+}
+
+function resolveOutgoingDirection(
+  message,
+  selfTargetSet,
+  selfNameSet,
+  peerTargetSet,
+  peerNameSet,
+) {
+  if (hasTargetMatch(message.senderCandidates, selfTargetSet)) {
+    return true;
+  }
+  if (hasTargetMatch(message.receiverCandidates, selfTargetSet)) {
+    return false;
+  }
+  if (hasTargetMatch(message.senderCandidates, peerTargetSet)) {
+    return false;
+  }
+  if (hasTargetMatch(message.receiverCandidates, peerTargetSet)) {
+    return true;
+  }
+  const senderName = normalizeName(message.sender);
+  if (senderName) {
+    if (selfNameSet.has(senderName)) {
+      return true;
+    }
+    if (peerNameSet.has(senderName)) {
+      return false;
+    }
+  }
+  return Boolean(message.isOutgoing);
+}
+
+function messageBelongsToConversation(
+  message,
+  conversationTargetSet,
+  peerTargetSet,
+  peerNameSet,
+  selectedContactKind,
+) {
   if (hasTargetMatch(message.conversationCandidates, conversationTargetSet)) {
     return true;
   }
-  if (hasTargetMatch(message.participantCandidates, contactTargetSet)) {
+  if (hasTargetMatch(message.participantCandidates, peerTargetSet)) {
     return true;
+  }
+  if (hasMessageHints(message)) {
+    return false;
+  }
+  if (selectedContactKind === "single") {
+    const senderName = normalizeName(message.sender);
+    return Boolean(senderName && peerNameSet.has(senderName));
   }
   return false;
 }
@@ -711,13 +893,24 @@ function normalizeMessages(rawData, profileName) {
         pickFirst(row, [
           "msg_id",
           "message_id",
+          "msgid",
+          "msgId",
           "id",
           "client_msg_id",
+          "clientMsgId",
           "server_msg_id",
+          "serverMsgId",
+          "msg_svr_id",
+          "msgsvrid",
+          "new_msg_id",
+          "newmsgid",
+          "local_id",
         ]) || "",
       ).trim();
       const conversationCandidates = collectConversationCandidates(row);
       const participantCandidates = collectParticipantCandidates(row);
+      const senderCandidates = collectSenderCandidates(row);
+      const receiverCandidates = collectReceiverCandidates(row);
       return {
         sender,
         content: buildMessageContent(row),
@@ -727,6 +920,8 @@ function normalizeMessages(rawData, profileName) {
         conversationId: conversationCandidates[0] || "",
         conversationCandidates,
         participantCandidates,
+        senderCandidates,
+        receiverCandidates,
         isOutgoing: inferOutgoing(row, profileName),
       };
     })
@@ -741,6 +936,8 @@ function getMessageIdentity(msg) {
     msg.conversationId ||
     (Array.isArray(msg.conversationCandidates) && msg.conversationCandidates[0]) ||
     (Array.isArray(msg.participantCandidates) && msg.participantCandidates[0]) ||
+    (Array.isArray(msg.senderCandidates) && msg.senderCandidates[0]) ||
+    (Array.isArray(msg.receiverCandidates) && msg.receiverCandidates[0]) ||
     "";
   return `t:${msg.ts}|cv:${conversationKey}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
 }
@@ -779,6 +976,14 @@ function mergeMessageRecord(base, incoming) {
     base.participantCandidates,
     incoming.participantCandidates,
   );
+  const mergedSenderCandidates = mergeUniqueArray(
+    base.senderCandidates,
+    incoming.senderCandidates,
+  );
+  const mergedReceiverCandidates = mergeUniqueArray(
+    base.receiverCandidates,
+    incoming.receiverCandidates,
+  );
   const next = {
     ...base,
     ...incoming,
@@ -789,6 +994,8 @@ function mergeMessageRecord(base, incoming) {
     time: incoming.time || base.time,
     conversationCandidates: mergedConversationCandidates,
     participantCandidates: mergedParticipantCandidates,
+    senderCandidates: mergedSenderCandidates,
+    receiverCandidates: mergedReceiverCandidates,
     conversationId:
       incoming.conversationId ||
       base.conversationId ||
@@ -807,7 +1014,9 @@ function mergeMessageRecord(base, incoming) {
     next.conversationId === base.conversationId &&
     Boolean(next.isOutgoing) === Boolean(base.isOutgoing) &&
     isSameArray(next.conversationCandidates, base.conversationCandidates) &&
-    isSameArray(next.participantCandidates, base.participantCandidates);
+    isSameArray(next.participantCandidates, base.participantCandidates) &&
+    isSameArray(next.senderCandidates, base.senderCandidates) &&
+    isSameArray(next.receiverCandidates, base.receiverCandidates);
   return unchanged ? base : next;
 }
 
@@ -853,12 +1062,12 @@ function isLikelyDuplicateMessage(existing, incoming) {
     return false;
   }
   const existingTargets = mergeUniqueArray(
-    existing.conversationCandidates,
-    existing.participantCandidates,
+    mergeUniqueArray(existing.conversationCandidates, existing.participantCandidates),
+    mergeUniqueArray(existing.senderCandidates, existing.receiverCandidates),
   );
   const incomingTargets = mergeUniqueArray(
-    incoming.conversationCandidates,
-    incoming.participantCandidates,
+    mergeUniqueArray(incoming.conversationCandidates, incoming.participantCandidates),
+    mergeUniqueArray(incoming.senderCandidates, incoming.receiverCandidates),
   );
   if (existingTargets.length && incomingTargets.length) {
     return hasArrayOverlap(existingTargets, incomingTargets);
@@ -1230,20 +1439,30 @@ export default {
 
         const incomingAll = normalizeMessages(payload.data, this.profileName);
         const conversationTargetSet = createConversationTargetSet(currentConversationId);
-        const contactTargetSet = buildContactTargetSet(
-          this.selectedContact,
-          currentConversationId,
-        );
-        const hasHints = incomingAll.some((item) => hasMessageHints(item));
-        const incoming = hasHints
-          ? incomingAll.filter((item) =>
-              messageBelongsToConversation(
-                item,
-                conversationTargetSet,
-                contactTargetSet,
-              ),
-            )
-          : incomingAll;
+        const peerTargetSet = buildContactPeerTargetSet(this.selectedContact);
+        const peerNameSet = buildContactNameSet(this.selectedContact);
+        const selfTargetSet = buildSelfTargetSet(this.session);
+        const selfNameSet = buildSelfNameSet(this.session, this.profileName);
+        const incoming = incomingAll
+          .filter((item) =>
+            messageBelongsToConversation(
+              item,
+              conversationTargetSet,
+              peerTargetSet,
+              peerNameSet,
+              this.selectedContactKind,
+            ),
+          )
+          .map((item) => ({
+            ...item,
+            isOutgoing: resolveOutgoingDirection(
+              item,
+              selfTargetSet,
+              selfNameSet,
+              peerTargetSet,
+              peerNameSet,
+            ),
+          }));
 
         const { merged, newItems, changed } = mergeMessageArrays(
           this.messages,
@@ -1566,7 +1785,12 @@ export default {
         }
         const nowTs = Date.now();
         const time = formatTime(nowTs);
-        const targetSet = buildContactTargetSet(this.selectedContact, this.conversationId);
+        const peerTargetSet = buildContactPeerTargetSet(this.selectedContact);
+        const selfTargetSet = buildSelfTargetSet(this.session);
+        const participantCandidates = mergeUniqueArray(
+          Array.from(selfTargetSet),
+          Array.from(peerTargetSet),
+        );
         const outgoingMessage = {
           sender: this.profileName,
           content,
@@ -1574,7 +1798,9 @@ export default {
           time,
           conversationId: normalizeConversationId(this.conversationId),
           conversationCandidates: buildConversationTargets(this.conversationId),
-          participantCandidates: Array.from(targetSet),
+          participantCandidates,
+          senderCandidates: Array.from(selfTargetSet),
+          receiverCandidates: Array.from(peerTargetSet),
           isOutgoing: true,
         };
         this.messages = keepRecentMessages(this.messages.concat(outgoingMessage), MAX_MESSAGE_CACHE);

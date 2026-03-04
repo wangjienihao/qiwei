@@ -155,7 +155,7 @@
                   </span>
                   <span>{{ item.time || "-" }}</span>
                 </div>
-                <div class="msg-bubble">{{ item.content || "-" }}</div>
+                <div class="msg-bubble">{{ item.content }}</div>
               </div>
 
               <el-avatar
@@ -836,6 +836,19 @@ function buildMessageContent(item) {
   return map[type] || `[${type}]`;
 }
 
+function normalizeVisibleText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isDisplayableMessage(item) {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+  return Boolean(normalizeVisibleText(item.content));
+}
+
 function inferOutgoing(item, profileName) {
   const boolKeys = [
     "from_self",
@@ -925,6 +938,7 @@ function normalizeMessages(rawData, profileName) {
         isOutgoing: inferOutgoing(row, profileName),
       };
     })
+    .filter((item) => isDisplayableMessage(item))
     .sort((a, b) => a.ts - b.ts);
 }
 
@@ -1464,8 +1478,11 @@ export default {
             ),
           }));
 
+        const existingMessages = this.messages.filter((item) =>
+          isDisplayableMessage(item),
+        );
         const { merged, newItems, changed } = mergeMessageArrays(
-          this.messages,
+          existingMessages,
           incoming,
           MAX_MESSAGE_CACHE,
         );

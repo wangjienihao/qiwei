@@ -329,6 +329,102 @@ function toTimestamp(raw) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function stripConversationPrefix(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^(S:|R:)/i, "");
+}
+
+function normalizeConversationId(raw) {
+  if (raw === undefined || raw === null || raw === "") {
+    return "";
+  }
+  const text = String(raw).trim();
+  if (!text) {
+    return "";
+  }
+  const upper = text.toUpperCase();
+  if (upper.startsWith("S:") || upper.startsWith("R:")) {
+    return `${upper[0]}:${text.slice(2)}`;
+  }
+  if (text.startsWith("10")) {
+    return `R:${text}`;
+  }
+  if (text.startsWith("788") || text.startsWith("168")) {
+    return `S:${text}`;
+  }
+  return text;
+}
+
+function buildConversationTargets(conversationId) {
+  const normalized = normalizeConversationId(conversationId);
+  const pure = stripConversationPrefix(conversationId);
+  const set = new Set([normalized, pure]);
+  if (pure.startsWith("10")) {
+    set.add(`R:${pure}`);
+  }
+  if (pure.startsWith("788") || pure.startsWith("168")) {
+    set.add(`S:${pure}`);
+  }
+  return Array.from(set).filter(Boolean);
+}
+
+function collectConversationCandidates(item) {
+  const values = [];
+  const keys = [
+    "conversation_id",
+    "conversationId",
+    "conv_id",
+    "talker_id",
+    "chat_id",
+    "room_id",
+    "group_id",
+    "to_conversation_id",
+    "from_conversation_id",
+    "to_id",
+    "peer_id",
+    "target_id",
+  ];
+  keys.forEach((key) => {
+    if (item[key] !== undefined && item[key] !== null && item[key] !== "") {
+      values.push(item[key]);
+    }
+  });
+  if (item.conversation && typeof item.conversation === "object") {
+    if (item.conversation.id) {
+      values.push(item.conversation.id);
+    }
+    if (item.conversation.conversation_id) {
+      values.push(item.conversation.conversation_id);
+    }
+  }
+
+  const set = new Set();
+  values.forEach((value) => {
+    const normalized = normalizeConversationId(value);
+    const pure = stripConversationPrefix(value);
+    if (normalized) {
+      set.add(normalized);
+    }
+    if (pure) {
+      set.add(pure);
+    }
+  });
+  return Array.from(set);
+}
+
+function messageBelongsToConversation(message, conversationId) {
+  const targets = buildConversationTargets(conversationId);
+  if (!targets.length) {
+    return true;
+  }
+  const candidates = message.conversationCandidates || [];
+  if (!candidates.length) {
+    return false;
+  }
+  return candidates.some((candidate) => targets.includes(candidate));
+}
+
 function formatTime(raw) {
   const ts = toTimestamp(raw);
   if (!ts) {
@@ -471,12 +567,15 @@ function normalizeMessages(rawData, profileName) {
           "server_msg_id",
         ]) || "",
       );
+      const conversationCandidates = collectConversationCandidates(item);
       return {
         sender,
         content: buildMessageContent(item),
         ts,
         time: formatTime(tsRaw),
         messageId,
+        conversationId: conversationCandidates[0] || "",
+        conversationCandidates,
         isOutgoing: inferOutgoing(item, profileName),
       };
     })
@@ -487,7 +586,11 @@ function getMessageIdentity(msg) {
   if (msg.messageId) {
     return `id:${msg.messageId}`;
   }
-  return `t:${msg.ts}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
+  const conversationKey =
+    msg.conversationId ||
+    (Array.isArray(msg.conversationCandidates) && msg.conversationCandidates[0]) ||
+    "";
+  return `t:${msg.ts}|cv:${conversationKey}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
 }
 
 function mergeMessageArrays(existing, incoming) {
@@ -750,7 +853,15 @@ export default {
           return;
         }
 
-        const incoming = normalizeMessages(payload.data, this.profileName);
+        const incomingAll = normalizeMessages(payload.data, this.profileName);
+        const hasConversationHints = incomingAll.some(
+          (item) => Array.isArray(item.conversationCandidates) && item.conversationCandidates.length > 0,
+        );
+        const incoming = hasConversationHints
+          ? incomingAll.filter((item) =>
+              messageBelongsToConversation(item, currentConversationId),
+            )
+          : incomingAll;
         const existingIdentitySet = new Set(this.messages.map(getMessageIdentity));
         const merged = mergeMessageArrays(this.messages, incoming);
         const newItems = merged.filter((item) => !existingIdentitySet.has(getMessageIdentity(item)));
@@ -1031,6 +1142,8 @@ export default {
           content,
           ts: nowTs,
           time,
+          conversationId: normalizeConversationId(this.conversationId),
+          conversationCandidates: buildConversationTargets(this.conversationId),
           isOutgoing: true,
         });
         this.touchContactSummary({

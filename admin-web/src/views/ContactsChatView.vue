@@ -30,7 +30,16 @@
           :highlight-current-row="true"
           @current-change="onCurrentChange"
         >
-          <el-table-column prop="name" label="名称" min-width="120" />
+          <el-table-column label="好友" min-width="180">
+            <template slot-scope="{ row }">
+              <div class="friend-cell">
+                <el-avatar :size="32" :src="row.avatar">
+                  {{ getNicknameInitial(row.nickname) }}
+                </el-avatar>
+                <span class="friend-name" :title="row.nickname">{{ row.nickname }}</span>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column prop="id" label="ID" min-width="170" />
         </el-table>
       </el-card>
@@ -47,7 +56,7 @@
 
         <el-form label-width="120px" size="small">
           <el-form-item label="当前好友">
-            <el-input :value="selectedContact ? selectedContact.name : ''" disabled />
+            <el-input :value="selectedContact ? selectedContact.nickname : ''" disabled />
           </el-form-item>
           <el-form-item label="会话 ID">
             <el-input
@@ -142,6 +151,12 @@ export default {
     this.loadContacts();
   },
   methods: {
+    getNicknameInitial(nickname) {
+      if (!nickname) {
+        return "友";
+      }
+      return String(nickname).trim().slice(0, 1);
+    },
     async request(path, data) {
       if (!this.session) {
         throw new Error("请先登录");
@@ -288,5 +303,19 @@ export default {
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.friend-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.friend-name {
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

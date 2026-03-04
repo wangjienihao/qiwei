@@ -12,10 +12,17 @@ function toArray(value) {
     "items",
     "contacts",
     "contact_list",
+    "contactList",
     "friends",
     "friend_list",
+    "friendList",
     "user_list",
+    "userList",
     "rows",
+    "members",
+    "member_list",
+    "external_contact_list",
+    "external_contacts",
   ];
   for (const key of candidateKeys) {
     if (Array.isArray(obj[key])) {
@@ -26,9 +33,24 @@ function toArray(value) {
   return [];
 }
 
+function getByPath(target, path) {
+  if (!target || typeof target !== "object") {
+    return undefined;
+  }
+  const segments = String(path).split(".");
+  let current = target;
+  for (const segment of segments) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
 function pickField(row, keys) {
   for (const key of keys) {
-    const value = row[key];
+    const value = key.includes(".") ? getByPath(row, key) : row[key];
     if (value !== undefined && value !== null && value !== "") {
       return String(value);
     }
@@ -41,25 +63,51 @@ export function normalizeContacts(rawData) {
   return rows.map((row, index) => {
     const id = pickField(row, [
       "conversation_id",
+      "conversationId",
       "user_id",
+      "userid",
+      "external_user_id",
       "external_userid",
       "wxid",
       "id",
+      "uid",
+      "profile.user_id",
       "username",
     ]);
-    const name = pickField(row, [
+    const nickname = pickField(row, [
       "remark",
       "nickname",
+      "nick_name",
+      "wx_nickname",
       "name",
       "display_name",
+      "contact_name",
+      "alias",
+      "profile.nickname",
+      "profile.name",
       "username",
     ]);
-    const avatar = pickField(row, ["avatar", "head_img", "headimgurl"]);
+    const avatar = pickField(row, [
+      "avatar",
+      "avatar_url",
+      "avatarUrl",
+      "head_img",
+      "headimgurl",
+      "head_image",
+      "small_avatar",
+      "thumb_url",
+      "icon",
+      "profile.avatar",
+      "profile.head_img",
+      "profile.headimgurl",
+    ]);
+    const displayName = nickname || "未命名好友";
 
     return {
       key: id || `contact_${index}`,
       id,
-      name: name || "未命名好友",
+      nickname: displayName,
+      name: displayName,
       avatar,
       raw: row,
     };

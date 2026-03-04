@@ -295,6 +295,8 @@ const DEFAULT_REALTIME_INTERVAL_MS = 5000;
 const MAX_MESSAGE_CACHE = 400;
 const MAX_MESSAGE_RENDER = 160;
 const AUTO_SCROLL_THRESHOLD_PX = 96;
+const DUPLICATE_TS_WINDOW_MS = 20 * 1000;
+const DUPLICATE_SCAN_TAIL = 100;
 
 function asList(value) {
   if (Array.isArray(value)) {
@@ -381,16 +383,76 @@ function createConversationTargetSet(conversationId) {
   return new Set(buildConversationTargets(conversationId));
 }
 
-function messageBelongsToTargetSet(message, targetSet) {
-  if (!targetSet || !targetSet.size) {
-    return true;
+function getByPath(target, path) {
+  if (!target || typeof target !== "object") {
+    return undefined;
   }
-  const candidates = message.conversationCandidates || [];
-  if (!candidates.length) {
+  const segments = String(path).split(".");
+  let current = target;
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function collectValuesByKeys(item, keys) {
+  if (!item || typeof item !== "object") {
+    return [];
+  }
+  const values = [];
+  keys.forEach((key) => {
+    const value = key.includes(".") ? getByPath(item, key) : item[key];
+    if (Array.isArray(value)) {
+      value.forEach((row) => {
+        if (row !== undefined && row !== null && row !== "") {
+          values.push(row);
+        }
+      });
+      return;
+    }
+    if (value !== undefined && value !== null && value !== "") {
+      values.push(value);
+    }
+  });
+  return values;
+}
+
+function addCandidateVariants(set, value) {
+  if (!set) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => addCandidateVariants(set, item));
+    return;
+  }
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return;
+  }
+  set.add(text);
+  const normalized = normalizeConversationId(text);
+  if (normalized) {
+    set.add(normalized);
+  }
+  const pure = stripConversationPrefix(text);
+  if (pure) {
+    set.add(pure);
+  }
+}
+
+function hasTargetMatch(values, targetSet) {
+  if (!targetSet || !targetSet.size || !Array.isArray(values) || !values.length) {
     return false;
   }
-  for (let i = 0; i < candidates.length; i += 1) {
-    if (targetSet.has(candidates[i])) {
+  for (let i = 0; i < values.length; i += 1) {
+    if (targetSet.has(values[i])) {
       return true;
     }
   }
@@ -398,8 +460,7 @@ function messageBelongsToTargetSet(message, targetSet) {
 }
 
 function collectConversationCandidates(item) {
-  const values = [];
-  const keys = [
+  const values = collectValuesByKeys(item, [
     "conversation_id",
     "conversationId",
     "conv_id",
@@ -409,36 +470,104 @@ function collectConversationCandidates(item) {
     "group_id",
     "to_conversation_id",
     "from_conversation_id",
+    "conversation.id",
+    "conversation.conversation_id",
+    "session.conversation_id",
+    "chat.conversation_id",
+  ]);
+  const set = new Set();
+  values.forEach((value) => addCandidateVariants(set, value));
+  return Array.from(set);
+}
+
+function collectParticipantCandidates(item) {
+  const values = collectValuesByKeys(item, [
+    "from_id",
     "to_id",
     "peer_id",
     "target_id",
-  ];
-  keys.forEach((key) => {
-    if (item[key] !== undefined && item[key] !== null && item[key] !== "") {
-      values.push(item[key]);
-    }
-  });
-  if (item.conversation && typeof item.conversation === "object") {
-    if (item.conversation.id) {
-      values.push(item.conversation.id);
-    }
-    if (item.conversation.conversation_id) {
-      values.push(item.conversation.conversation_id);
-    }
-  }
-
+    "sender_id",
+    "sender_user_id",
+    "sender_userid",
+    "sender_wxid",
+    "from_user_id",
+    "from_userid",
+    "to_user_id",
+    "to_userid",
+    "user_id",
+    "userid",
+    "external_user_id",
+    "external_userid",
+    "friend_id",
+    "contact_id",
+    "contactId",
+    "receiver_id",
+    "receive_id",
+    "talker",
+    "from.id",
+    "to.id",
+    "sender.id",
+    "receiver.id",
+    "from.user_id",
+    "to.user_id",
+  ]);
   const set = new Set();
-  values.forEach((value) => {
-    const normalized = normalizeConversationId(value);
-    const pure = stripConversationPrefix(value);
-    if (normalized) {
-      set.add(normalized);
-    }
-    if (pure) {
-      set.add(pure);
-    }
-  });
+  values.forEach((value) => addCandidateVariants(set, value));
   return Array.from(set);
+}
+
+function buildContactTargetSet(contact, conversationId) {
+  const set = createConversationTargetSet(conversationId);
+  if (!contact || typeof contact !== "object") {
+    return set;
+  }
+  addCandidateVariants(set, contact.id);
+  const raw = contact.raw && typeof contact.raw === "object" ? contact.raw : {};
+  collectValuesByKeys(raw, [
+    "conversation_id",
+    "conversationId",
+    "conv_id",
+    "chat_id",
+    "room_id",
+    "group_id",
+    "talker_id",
+    "id",
+    "user_id",
+    "userid",
+    "external_user_id",
+    "external_userid",
+    "wxid",
+    "uid",
+    "peer_id",
+    "target_id",
+    "contact_id",
+    "contactId",
+    "friend_id",
+    "from_id",
+    "to_id",
+    "profile.user_id",
+    "profile.external_user_id",
+  ]).forEach((value) => addCandidateVariants(set, value));
+  return set;
+}
+
+function hasMessageHints(message) {
+  return (
+    (Array.isArray(message.conversationCandidates) &&
+      message.conversationCandidates.length > 0) ||
+    (Array.isArray(message.participantCandidates) &&
+      message.participantCandidates.length > 0)
+  );
+}
+
+function messageBelongsToConversation(message, conversationTargetSet, contactTargetSet) {
+  if (hasTargetMatch(message.conversationCandidates, conversationTargetSet)) {
+    return true;
+  }
+  if (hasTargetMatch(message.participantCandidates, contactTargetSet)) {
+    return true;
+  }
+  return false;
 }
 
 function formatTime(raw) {
@@ -481,6 +610,9 @@ function isSameDay(a, b) {
 }
 
 function pickFirst(item, keys) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
   for (const key of keys) {
     const value = item[key];
     if (value !== undefined && value !== null && value !== "") {
@@ -558,15 +690,16 @@ function inferOutgoing(item, profileName) {
 function normalizeMessages(rawData, profileName) {
   return asList(rawData)
     .map((item) => {
+      const row = item && typeof item === "object" ? item : {};
       const sender = String(
-        item.sender_name ||
-          item.nickname ||
-          item.from_name ||
-          item.from ||
-          item.username ||
+        row.sender_name ||
+          row.nickname ||
+          row.from_name ||
+          row.from ||
+          row.username ||
           "",
       );
-      const tsRaw = pickFirst(item, [
+      const tsRaw = pickFirst(row, [
         "create_time",
         "send_time",
         "time",
@@ -575,24 +708,26 @@ function normalizeMessages(rawData, profileName) {
       ]);
       const ts = toTimestamp(tsRaw);
       const messageId = String(
-        pickFirst(item, [
+        pickFirst(row, [
           "msg_id",
           "message_id",
           "id",
           "client_msg_id",
           "server_msg_id",
         ]) || "",
-      );
-      const conversationCandidates = collectConversationCandidates(item);
+      ).trim();
+      const conversationCandidates = collectConversationCandidates(row);
+      const participantCandidates = collectParticipantCandidates(row);
       return {
         sender,
-        content: buildMessageContent(item),
+        content: buildMessageContent(row),
         ts,
         time: formatTime(tsRaw),
         messageId,
         conversationId: conversationCandidates[0] || "",
         conversationCandidates,
-        isOutgoing: inferOutgoing(item, profileName),
+        participantCandidates,
+        isOutgoing: inferOutgoing(row, profileName),
       };
     })
     .sort((a, b) => a.ts - b.ts);
@@ -605,24 +740,177 @@ function getMessageIdentity(msg) {
   const conversationKey =
     msg.conversationId ||
     (Array.isArray(msg.conversationCandidates) && msg.conversationCandidates[0]) ||
+    (Array.isArray(msg.participantCandidates) && msg.participantCandidates[0]) ||
     "";
   return `t:${msg.ts}|cv:${conversationKey}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
 }
 
+function normalizeTextForDedupe(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function mergeUniqueArray(a, b) {
+  return Array.from(new Set([...(a || []), ...(b || [])].filter(Boolean)));
+}
+
+function isSameArray(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function mergeMessageRecord(base, incoming) {
+  const mergedConversationCandidates = mergeUniqueArray(
+    base.conversationCandidates,
+    incoming.conversationCandidates,
+  );
+  const mergedParticipantCandidates = mergeUniqueArray(
+    base.participantCandidates,
+    incoming.participantCandidates,
+  );
+  const next = {
+    ...base,
+    ...incoming,
+    messageId: incoming.messageId || base.messageId,
+    sender: incoming.sender || base.sender,
+    content: incoming.content || base.content,
+    ts: incoming.ts || base.ts,
+    time: incoming.time || base.time,
+    conversationCandidates: mergedConversationCandidates,
+    participantCandidates: mergedParticipantCandidates,
+    conversationId:
+      incoming.conversationId ||
+      base.conversationId ||
+      mergedConversationCandidates[0] ||
+      mergedParticipantCandidates[0] ||
+      "",
+    isOutgoing:
+      incoming.isOutgoing === undefined ? Boolean(base.isOutgoing) : Boolean(incoming.isOutgoing),
+  };
+  const unchanged =
+    next.messageId === base.messageId &&
+    next.sender === base.sender &&
+    next.content === base.content &&
+    Number(next.ts || 0) === Number(base.ts || 0) &&
+    next.time === base.time &&
+    next.conversationId === base.conversationId &&
+    Boolean(next.isOutgoing) === Boolean(base.isOutgoing) &&
+    isSameArray(next.conversationCandidates, base.conversationCandidates) &&
+    isSameArray(next.participantCandidates, base.participantCandidates);
+  return unchanged ? base : next;
+}
+
+function hasArrayOverlap(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || !a.length || !b.length) {
+    return false;
+  }
+  const set = new Set(a);
+  for (let i = 0; i < b.length; i += 1) {
+    if (set.has(b[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLikelyDuplicateMessage(existing, incoming) {
+  if (!existing || !incoming) {
+    return false;
+  }
+  if (existing.messageId && incoming.messageId) {
+    return existing.messageId === incoming.messageId;
+  }
+  if (Boolean(existing.isOutgoing) !== Boolean(incoming.isOutgoing)) {
+    return false;
+  }
+  const existingContent = normalizeTextForDedupe(existing.content);
+  const incomingContent = normalizeTextForDedupe(incoming.content);
+  if (!existingContent || existingContent !== incomingContent) {
+    return false;
+  }
+  const existingTs = Number(existing.ts || 0);
+  const incomingTs = Number(incoming.ts || 0);
+  if (existingTs > 0 && incomingTs > 0) {
+    const tsDelta = Math.abs(existingTs - incomingTs);
+    if (tsDelta > DUPLICATE_TS_WINDOW_MS) {
+      return false;
+    }
+  }
+  const existingSender = String(existing.sender || "").trim();
+  const incomingSender = String(incoming.sender || "").trim();
+  if (existingSender && incomingSender && existingSender !== incomingSender) {
+    return false;
+  }
+  const existingTargets = mergeUniqueArray(
+    existing.conversationCandidates,
+    existing.participantCandidates,
+  );
+  const incomingTargets = mergeUniqueArray(
+    incoming.conversationCandidates,
+    incoming.participantCandidates,
+  );
+  if (existingTargets.length && incomingTargets.length) {
+    return hasArrayOverlap(existingTargets, incomingTargets);
+  }
+  return true;
+}
+
 function mergeMessageArrays(existing, incoming, maxSize = MAX_MESSAGE_CACHE) {
-  const map = new Map();
-  existing.forEach((item) => {
-    map.set(getMessageIdentity(item), item);
+  const mergedList = existing.slice();
+  const strictIndexMap = new Map();
+  mergedList.forEach((item, index) => {
+    strictIndexMap.set(getMessageIdentity(item), index);
   });
   const newItems = [];
+  let changed = false;
   incoming.forEach((item) => {
-    const identity = getMessageIdentity(item);
-    if (!map.has(identity)) {
-      map.set(identity, item);
-      newItems.push(item);
+    const strictIdentity = getMessageIdentity(item);
+    if (strictIndexMap.has(strictIdentity)) {
+      const existingIndex = strictIndexMap.get(strictIdentity);
+      const mergedItem = mergeMessageRecord(mergedList[existingIndex], item);
+      if (mergedItem !== mergedList[existingIndex]) {
+        mergedList[existingIndex] = mergedItem;
+        changed = true;
+      }
+      strictIndexMap.set(getMessageIdentity(mergedItem), existingIndex);
+      return;
     }
+
+    const start = Math.max(0, mergedList.length - DUPLICATE_SCAN_TAIL);
+    let duplicateIndex = -1;
+    for (let i = mergedList.length - 1; i >= start; i -= 1) {
+      if (isLikelyDuplicateMessage(mergedList[i], item)) {
+        duplicateIndex = i;
+        break;
+      }
+    }
+    if (duplicateIndex >= 0) {
+      const mergedItem = mergeMessageRecord(mergedList[duplicateIndex], item);
+      if (mergedItem !== mergedList[duplicateIndex]) {
+        mergedList[duplicateIndex] = mergedItem;
+        changed = true;
+      }
+      strictIndexMap.set(getMessageIdentity(mergedItem), duplicateIndex);
+      return;
+    }
+
+    mergedList.push(item);
+    strictIndexMap.set(strictIdentity, mergedList.length - 1);
+    changed = true;
+    newItems.push(item);
   });
-  let merged = Array.from(map.values()).sort((a, b) => a.ts - b.ts);
+  let merged = mergedList.slice().sort((a, b) => a.ts - b.ts);
   let trimmed = false;
   if (maxSize > 0 && merged.length > maxSize) {
     merged = merged.slice(merged.length - maxSize);
@@ -631,7 +919,7 @@ function mergeMessageArrays(existing, incoming, maxSize = MAX_MESSAGE_CACHE) {
   return {
     merged,
     newItems,
-    changed: trimmed || newItems.length > 0,
+    changed: trimmed || changed,
   };
 }
 
@@ -941,12 +1229,20 @@ export default {
         }
 
         const incomingAll = normalizeMessages(payload.data, this.profileName);
-        const targetSet = createConversationTargetSet(currentConversationId);
-        const hasConversationHints = incomingAll.some(
-          (item) => Array.isArray(item.conversationCandidates) && item.conversationCandidates.length > 0,
+        const conversationTargetSet = createConversationTargetSet(currentConversationId);
+        const contactTargetSet = buildContactTargetSet(
+          this.selectedContact,
+          currentConversationId,
         );
-        const incoming = hasConversationHints
-          ? incomingAll.filter((item) => messageBelongsToTargetSet(item, targetSet))
+        const hasHints = incomingAll.some((item) => hasMessageHints(item));
+        const incoming = hasHints
+          ? incomingAll.filter((item) =>
+              messageBelongsToConversation(
+                item,
+                conversationTargetSet,
+                contactTargetSet,
+              ),
+            )
           : incomingAll;
 
         const { merged, newItems, changed } = mergeMessageArrays(
@@ -1270,6 +1566,7 @@ export default {
         }
         const nowTs = Date.now();
         const time = formatTime(nowTs);
+        const targetSet = buildContactTargetSet(this.selectedContact, this.conversationId);
         const outgoingMessage = {
           sender: this.profileName,
           content,
@@ -1277,6 +1574,7 @@ export default {
           time,
           conversationId: normalizeConversationId(this.conversationId),
           conversationCandidates: buildConversationTargets(this.conversationId),
+          participantCandidates: Array.from(targetSet),
           isOutgoing: true,
         };
         this.messages = keepRecentMessages(this.messages.concat(outgoingMessage), MAX_MESSAGE_CACHE);

@@ -125,6 +125,10 @@
           description="暂无消息，点击右上角“拉取消息”"
         />
         <div v-else class="message-stream">
+          <div v-if="hiddenMessageCount > 0" class="stream-tip">
+            为保证流畅，仅展示最近 {{ renderMessages.length }} 条消息（更早
+            {{ hiddenMessageCount }} 条已折叠）
+          </div>
           <template v-for="item in displayMessages">
             <div v-if="item.kind === 'divider'" :key="item.key" class="time-divider">
               <span>{{ item.label }}</span>
@@ -287,6 +291,10 @@ import { requestBySession } from "../api/sessionGateway";
 import { inferConversationId, normalizeContacts } from "../utils/contact";
 
 const TAG_ASSIGNMENT_STORAGE_KEY = "qiwei_tag_assignments_v1";
+const DEFAULT_REALTIME_INTERVAL_MS = 5000;
+const MAX_MESSAGE_CACHE = 400;
+const MAX_MESSAGE_RENDER = 160;
+const AUTO_SCROLL_THRESHOLD_PX = 96;
 
 function asList(value) {
   if (Array.isArray(value)) {
@@ -369,6 +377,26 @@ function buildConversationTargets(conversationId) {
   return Array.from(set).filter(Boolean);
 }
 
+function createConversationTargetSet(conversationId) {
+  return new Set(buildConversationTargets(conversationId));
+}
+
+function messageBelongsToTargetSet(message, targetSet) {
+  if (!targetSet || !targetSet.size) {
+    return true;
+  }
+  const candidates = message.conversationCandidates || [];
+  if (!candidates.length) {
+    return false;
+  }
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (targetSet.has(candidates[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function collectConversationCandidates(item) {
   const values = [];
   const keys = [
@@ -411,18 +439,6 @@ function collectConversationCandidates(item) {
     }
   });
   return Array.from(set);
-}
-
-function messageBelongsToConversation(message, conversationId) {
-  const targets = buildConversationTargets(conversationId);
-  if (!targets.length) {
-    return true;
-  }
-  const candidates = message.conversationCandidates || [];
-  if (!candidates.length) {
-    return false;
-  }
-  return candidates.some((candidate) => targets.includes(candidate));
 }
 
 function formatTime(raw) {
@@ -593,15 +609,37 @@ function getMessageIdentity(msg) {
   return `t:${msg.ts}|cv:${conversationKey}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
 }
 
-function mergeMessageArrays(existing, incoming) {
+function mergeMessageArrays(existing, incoming, maxSize = MAX_MESSAGE_CACHE) {
   const map = new Map();
   existing.forEach((item) => {
     map.set(getMessageIdentity(item), item);
   });
+  const newItems = [];
   incoming.forEach((item) => {
-    map.set(getMessageIdentity(item), item);
+    const identity = getMessageIdentity(item);
+    if (!map.has(identity)) {
+      map.set(identity, item);
+      newItems.push(item);
+    }
   });
-  return Array.from(map.values()).sort((a, b) => a.ts - b.ts);
+  let merged = Array.from(map.values()).sort((a, b) => a.ts - b.ts);
+  let trimmed = false;
+  if (maxSize > 0 && merged.length > maxSize) {
+    merged = merged.slice(merged.length - maxSize);
+    trimmed = true;
+  }
+  return {
+    merged,
+    newItems,
+    changed: trimmed || newItems.length > 0,
+  };
+}
+
+function keepRecentMessages(messages, maxSize = MAX_MESSAGE_CACHE) {
+  if (maxSize <= 0 || messages.length <= maxSize) {
+    return messages;
+  }
+  return messages.slice(messages.length - maxSize);
 }
 
 function inferConversationKind(contact) {
@@ -623,9 +661,10 @@ export default {
       detailVisible: false,
       contactDetailLoading: false,
       realtimeEnabled: true,
-      realtimeIntervalMs: 3000,
+      realtimeIntervalMs: DEFAULT_REALTIME_INTERVAL_MS,
       realtimeTimer: null,
       realtimeBusy: false,
+      isPageVisible: true,
       lastSyncAt: "",
       conversationFilter: "all",
       keyword: "",
@@ -692,14 +731,24 @@ export default {
       }));
     },
     prettyContactDetail() {
+      if (!this.detailVisible) {
+        return "";
+      }
       return JSON.stringify(this.contactDetail || {}, null, 2);
+    },
+    renderMessages() {
+      return keepRecentMessages(this.messages, MAX_MESSAGE_RENDER);
+    },
+    hiddenMessageCount() {
+      return Math.max(0, this.messages.length - this.renderMessages.length);
     },
     displayMessages() {
       const rows = [];
       let lastTs = 0;
-      for (let i = 0; i < this.messages.length; i += 1) {
-        const item = this.messages[i];
+      for (let i = 0; i < this.renderMessages.length; i += 1) {
+        const item = this.renderMessages[i];
         const ts = item.ts || 0;
+        const identity = getMessageIdentity(item) || `${ts || 0}_${i}`;
         const needDivider =
           i === 0 ||
           !lastTs ||
@@ -708,14 +757,14 @@ export default {
         if (needDivider) {
           rows.push({
             kind: "divider",
-            key: `d_${i}_${ts || i}`,
+            key: `d_${identity}`,
             label: formatDividerLabel(ts),
           });
         }
         rows.push({
           ...item,
           kind: "message",
-          key: `m_${i}_${ts || i}`,
+          key: `m_${identity}`,
         });
         lastTs = ts;
       }
@@ -763,27 +812,42 @@ export default {
           if (unreadScore !== 0) {
             return unreadScore;
           }
-          return toTimestamp(b.lastTime) - toTimestamp(a.lastTime);
+          return Number(b.lastTs || 0) - Number(a.lastTs || 0);
         });
     },
     prettyLastResponse() {
+      if (!this.debugVisible) {
+        return "";
+      }
       return JSON.stringify(this.lastResponse || {}, null, 2);
     },
   },
   watch: {
-    messages() {
-      this.$nextTick(this.scrollToBottom);
+    messages(next, prev) {
+      const nextLength = Array.isArray(next) ? next.length : 0;
+      const prevLength = Array.isArray(prev) ? prev.length : 0;
+      if (nextLength <= prevLength) {
+        return;
+      }
+      this.$nextTick(() => this.scrollToBottom(false));
     },
     selectedContactKey() {
       this.contactDetail = null;
     },
   },
   created() {
+    if (typeof document !== "undefined") {
+      this.isPageVisible = !document.hidden;
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.restoreAssignmentMap();
     this.loadTagMap();
     this.loadContacts();
   },
   beforeDestroy() {
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.stopRealtimePolling();
   },
   methods: {
@@ -799,6 +863,21 @@ export default {
     updateLastSyncTime() {
       this.lastSyncAt = formatTime(Date.now());
     },
+    onVisibilityChange() {
+      if (typeof document === "undefined") {
+        this.isPageVisible = true;
+        return;
+      }
+      this.isPageVisible = !document.hidden;
+      if (!this.isPageVisible) {
+        this.stopRealtimePolling();
+        return;
+      }
+      this.restartRealtimePolling();
+      if (this.realtimeEnabled && this.conversationId) {
+        this.syncMessages({ silent: true });
+      }
+    },
     onRealtimeToggle() {
       this.restartRealtimePolling();
       if (this.realtimeEnabled && this.conversationId) {
@@ -806,11 +885,14 @@ export default {
       }
     },
     startRealtimePolling() {
-      if (!this.realtimeEnabled || !this.conversationId) {
+      if (!this.realtimeEnabled || !this.conversationId || !this.isPageVisible) {
         return;
       }
       this.stopRealtimePolling();
       this.realtimeTimer = setInterval(() => {
+        if (!this.isPageVisible) {
+          return;
+        }
         this.syncMessages({ silent: true });
       }, this.realtimeIntervalMs);
     },
@@ -826,6 +908,9 @@ export default {
     },
     async syncMessages({ silent = false } = {}) {
       if (!this.conversationId) {
+        return;
+      }
+      if (silent && !this.isPageVisible) {
         return;
       }
       if (this.realtimeBusy) {
@@ -845,7 +930,9 @@ export default {
         if (currentConversationId !== this.conversationId) {
           return;
         }
-        this.lastResponse = payload;
+        if (!silent || this.debugVisible) {
+          this.lastResponse = payload;
+        }
         if (hasBusinessError(payload)) {
           if (!silent) {
             this.$message.error(getErrorMessage(payload) || "拉取消息失败");
@@ -854,24 +941,30 @@ export default {
         }
 
         const incomingAll = normalizeMessages(payload.data, this.profileName);
+        const targetSet = createConversationTargetSet(currentConversationId);
         const hasConversationHints = incomingAll.some(
           (item) => Array.isArray(item.conversationCandidates) && item.conversationCandidates.length > 0,
         );
         const incoming = hasConversationHints
-          ? incomingAll.filter((item) =>
-              messageBelongsToConversation(item, currentConversationId),
-            )
+          ? incomingAll.filter((item) => messageBelongsToTargetSet(item, targetSet))
           : incomingAll;
-        const existingIdentitySet = new Set(this.messages.map(getMessageIdentity));
-        const merged = mergeMessageArrays(this.messages, incoming);
-        const newItems = merged.filter((item) => !existingIdentitySet.has(getMessageIdentity(item)));
-        this.messages = merged;
-        this.updateLastSyncTime();
 
-        if (!this.messages.length) {
+        const { merged, newItems, changed } = mergeMessageArrays(
+          this.messages,
+          incoming,
+          MAX_MESSAGE_CACHE,
+        );
+        if (changed) {
+          this.messages = merged;
+        }
+        if (!silent || changed) {
+          this.updateLastSyncTime();
+        }
+
+        if (!merged.length || !newItems.length) {
           return;
         }
-        const latest = this.messages[this.messages.length - 1];
+        const latest = merged[merged.length - 1];
         this.touchContactSummary({
           message: latest.content,
           time: latest.time,
@@ -989,16 +1082,32 @@ export default {
       }
     },
     markPendingState(contactKey, pending) {
+      if (Boolean(this.pendingMap[contactKey]) === Boolean(pending)) {
+        return;
+      }
       this.pendingMap = {
         ...this.pendingMap,
         [contactKey]: Boolean(pending),
       };
     },
-    scrollToBottom() {
-      if (!this.$refs.msgViewport) {
+    isNearBottom() {
+      const viewport = this.$refs.msgViewport;
+      if (!viewport) {
+        return true;
+      }
+      const distance =
+        viewport.scrollHeight - (viewport.scrollTop + viewport.clientHeight);
+      return distance <= AUTO_SCROLL_THRESHOLD_PX;
+    },
+    scrollToBottom(force = false) {
+      const viewport = this.$refs.msgViewport;
+      if (!viewport) {
         return;
       }
-      this.$refs.msgViewport.scrollTop = this.$refs.msgViewport.scrollHeight;
+      if (!force && !this.isNearBottom()) {
+        return;
+      }
+      viewport.scrollTop = viewport.scrollHeight;
     },
     touchContactSummary({ message, time, unreadCount }) {
       if (!this.selectedContact) {
@@ -1008,13 +1117,25 @@ export default {
       if (idx < 0) {
         return;
       }
+      const current = this.contacts[idx];
+      const nextMessage = message || current.lastMessage;
+      const nextTime = time || current.lastTime;
+      const nextUnread =
+        unreadCount === undefined ? Number(current.unreadCount || 0) : Number(unreadCount || 0);
+      if (
+        String(current.lastMessage || "") === String(nextMessage || "") &&
+        String(current.lastTime || "") === String(nextTime || "") &&
+        Number(current.unreadCount || 0) === nextUnread
+      ) {
+        return;
+      }
       const next = this.contacts.slice();
       next[idx] = {
         ...next[idx],
-        lastMessage: message || next[idx].lastMessage,
-        lastTime: time || next[idx].lastTime,
-        unreadCount:
-          unreadCount === undefined ? next[idx].unreadCount : Number(unreadCount || 0),
+        lastMessage: nextMessage,
+        lastTime: nextTime,
+        lastTs: toTimestamp(nextTime),
+        unreadCount: nextUnread,
       };
       this.contacts = next;
     },
@@ -1022,16 +1143,25 @@ export default {
       if (!contact) {
         return;
       }
+      const nextConversationId = inferConversationId(contact);
+      if (
+        this.selectedContactKey === contact.key &&
+        this.conversationId === nextConversationId &&
+        this.messages.length
+      ) {
+        return;
+      }
       this.selectedContactKey = contact.key;
-      this.conversationId = inferConversationId(contact);
+      this.conversationId = nextConversationId;
       this.messages = [];
       await this.syncMessages({ silent: false });
       this.restartRealtimePolling();
+      this.$nextTick(() => this.scrollToBottom(true));
     },
     async nextPendingConversation() {
       const list = this.contacts
         .filter((item) => this.isContactPending(item))
-        .sort((a, b) => toTimestamp(b.lastTime) - toTimestamp(a.lastTime));
+        .sort((a, b) => Number(b.lastTs || 0) - Number(a.lastTs || 0));
       if (!list.length) {
         this.$message.info("当前没有待回复会话");
         return;
@@ -1075,7 +1205,10 @@ export default {
           this.$message.error(getErrorMessage(payload) || "同步联系人失败");
           return;
         }
-        const nextContacts = normalizeContacts(payload.data);
+        const nextContacts = normalizeContacts(payload.data).map((item) => ({
+          ...item,
+          lastTs: toTimestamp(item.lastTime),
+        }));
         // Keep pending state for contacts still existing in list.
         const nextPending = {};
         nextContacts.forEach((item) => {
@@ -1137,7 +1270,7 @@ export default {
         }
         const nowTs = Date.now();
         const time = formatTime(nowTs);
-        this.messages.push({
+        const outgoingMessage = {
           sender: this.profileName,
           content,
           ts: nowTs,
@@ -1145,15 +1278,18 @@ export default {
           conversationId: normalizeConversationId(this.conversationId),
           conversationCandidates: buildConversationTargets(this.conversationId),
           isOutgoing: true,
-        });
+        };
+        this.messages = keepRecentMessages(this.messages.concat(outgoingMessage), MAX_MESSAGE_CACHE);
         this.touchContactSummary({
           message: content,
           time,
           unreadCount: 0,
         });
-        this.markPendingState(this.selectedContact.key, false);
+        if (this.selectedContact) {
+          this.markPendingState(this.selectedContact.key, false);
+        }
         this.messageText = "";
-        this.scrollToBottom();
+        this.$nextTick(() => this.scrollToBottom(true));
       } catch (error) {
         this.$message.error(error.message || "发送失败");
       } finally {
@@ -1332,6 +1468,16 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.stream-tip {
+  align-self: center;
+  font-size: 12px;
+  color: #909399;
+  background: #eef3ff;
+  border: 1px solid #d8e3ff;
+  border-radius: 999px;
+  padding: 4px 10px;
 }
 
 .time-divider {

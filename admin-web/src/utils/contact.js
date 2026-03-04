@@ -48,6 +48,14 @@ function getByPath(target, path) {
   return current;
 }
 
+function normalizeCount(value) {
+  const num = Number(value);
+  if (Number.isNaN(num) || num < 0) {
+    return 0;
+  }
+  return num;
+}
+
 function pickField(row, keys) {
   for (const key of keys) {
     const value = key.includes(".") ? getByPath(row, key) : row[key];
@@ -101,6 +109,23 @@ export function normalizeContacts(rawData) {
       "profile.head_img",
       "profile.headimgurl",
     ]);
+    const lastMessage = pickField(row, [
+      "last_message",
+      "last_msg",
+      "recent_message",
+      "message_preview",
+      "profile.last_message",
+    ]);
+    const lastTime = pickField(row, [
+      "last_time",
+      "last_message_time",
+      "update_time",
+      "update_at",
+      "profile.last_time",
+    ]);
+    const unreadCount = normalizeCount(
+      pickField(row, ["unread", "unread_count", "msg_unread", "profile.unread_count"]),
+    );
     const displayName = nickname || "未命名好友";
 
     return {
@@ -109,6 +134,9 @@ export function normalizeContacts(rawData) {
       nickname: displayName,
       name: displayName,
       avatar,
+      lastMessage,
+      lastTime,
+      unreadCount,
       raw: row,
     };
   });

@@ -1,35 +1,42 @@
 <template>
   <div>
     <el-row :gutter="12" class="summary-row">
-      <el-col :span="8">
+      <el-col :span="6">
         <el-card shadow="never" class="summary-card">
-          <div class="label">联系人数量</div>
+          <div class="label">联系人</div>
           <div class="value">{{ contacts.length }}</div>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
+        <el-card shadow="never" class="summary-card">
+          <div class="label">最近会话</div>
+          <div class="value">{{ recentContacts.length }}</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
         <el-card shadow="never" class="summary-card">
           <div class="label">会话消息</div>
           <div class="value">{{ messages.length }}</div>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <el-card shadow="never" class="summary-card">
-          <div class="label">当前会话</div>
-          <div class="value ellipsis">{{ conversationId || "-" }}</div>
+          <div class="label">未读总数</div>
+          <div class="value">{{ unreadTotal }}</div>
         </el-card>
       </el-col>
     </el-row>
 
     <el-row :gutter="12">
-      <el-col :span="8">
+      <el-col :span="9">
         <el-card shadow="never" class="panel-card">
           <div slot="header" class="head">
-            <span>会话联系人</span>
+            <span>联系人与最近会话</span>
             <el-button size="mini" :loading="loadingContacts" @click="loadContacts">
               刷新
             </el-button>
           </div>
+
           <el-input
             v-model.trim="keyword"
             size="small"
@@ -37,33 +44,76 @@
             placeholder="搜索昵称/ID"
             class="search"
           />
-          <el-table
-            :data="filteredContacts"
-            height="460"
-            border
-            row-key="key"
-            :highlight-current-row="true"
-            @current-change="selectContact"
-          >
-            <el-table-column label="昵称" min-width="140">
-              <template slot-scope="{ row }">
-                <div class="contact-cell">
-                  <el-avatar :src="row.avatar" :size="28">
-                    {{ getInitial(row.nickname) }}
+
+          <el-tabs v-model="leftTab" stretch>
+            <el-tab-pane label="最近会话" name="recent">
+              <div v-if="!recentContacts.length" class="empty">
+                <el-empty :image-size="72" description="暂无最近会话" />
+              </div>
+              <div v-else class="recent-list">
+                <div
+                  v-for="contact in recentContacts"
+                  :key="contact.key"
+                  class="recent-item"
+                  :class="{ active: selectedContact && selectedContact.key === contact.key }"
+                  @click="selectContact(contact)"
+                >
+                  <el-avatar :src="contact.avatar" :size="34">
+                    {{ getInitial(contact.nickname) }}
                   </el-avatar>
-                  <span class="ellipsis">{{ row.nickname }}</span>
+                  <div class="recent-main">
+                    <div class="recent-top">
+                      <span class="name ellipsis">{{ contact.nickname }}</span>
+                      <span class="time">{{ contact.lastTime || "-" }}</span>
+                    </div>
+                    <div class="recent-bottom">
+                      <span class="msg ellipsis">
+                        {{ contact.lastMessage || "暂无最近消息" }}
+                      </span>
+                      <el-badge
+                        v-if="contact.unreadCount > 0"
+                        :value="contact.unreadCount"
+                        :max="99"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="id" label="ID" min-width="150" />
-          </el-table>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="全部联系人" name="contacts">
+              <el-table
+                :data="filteredContacts"
+                height="442"
+                border
+                row-key="key"
+                :highlight-current-row="true"
+                @current-change="selectContact"
+              >
+                <el-table-column label="昵称" min-width="150">
+                  <template slot-scope="{ row }">
+                    <div class="contact-cell">
+                      <el-avatar :src="row.avatar" :size="28">
+                        {{ getInitial(row.nickname) }}
+                      </el-avatar>
+                      <div class="contact-meta">
+                        <span class="ellipsis">{{ row.nickname }}</span>
+                        <small class="sub ellipsis">{{ row.id }}</small>
+                      </div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="lastTime" label="最近时间" width="118" />
+              </el-table>
+            </el-tab-pane>
+          </el-tabs>
         </el-card>
       </el-col>
 
-      <el-col :span="16">
+      <el-col :span="15">
         <el-card shadow="never" class="panel-card">
           <div slot="header" class="head">
-            <span>会话中心（V2）</span>
+            <span>会话中心（V2.1）</span>
             <div class="head-actions">
               <el-button size="mini" :loading="loadingMessages" @click="loadMessages">
                 拉取消息
@@ -75,21 +125,45 @@
           </div>
 
           <el-form :inline="true" size="small" class="inline-form">
+            <el-form-item label="当前联系人">
+              <el-input
+                :value="selectedContact ? selectedContact.nickname : '未选择'"
+                style="width: 180px"
+                disabled
+              />
+            </el-form-item>
             <el-form-item label="会话 ID">
               <el-input
                 v-model.trim="conversationId"
-                style="width: 260px"
+                style="width: 240px"
                 placeholder="S:788xxxx / R:10xxxx"
               />
             </el-form-item>
-            <el-form-item label="消息内容">
-              <el-input
-                v-model="messageText"
-                style="width: 360px"
-                placeholder="输入要发送的文本消息"
-              />
+            <el-form-item label="快捷语">
+              <el-select
+                v-model="quickTemplate"
+                clearable
+                style="width: 190px"
+                placeholder="选择常用话术"
+                @change="applyQuickTemplate"
+              >
+                <el-option
+                  v-for="item in quickTemplates"
+                  :key="item"
+                  :value="item"
+                  :label="item"
+                />
+              </el-select>
             </el-form-item>
           </el-form>
+
+          <el-input
+            v-model="messageText"
+            type="textarea"
+            :rows="3"
+            placeholder="输入要发送的文本消息"
+            class="compose"
+          />
 
           <el-empty v-if="!messages.length" description="暂无消息，点击“拉取消息”尝试同步" />
           <div v-else class="msg-list">
@@ -154,6 +228,15 @@ function normalizeMessages(rawData) {
   }));
 }
 
+function toTimeScore(text) {
+  if (!text) {
+    return 0;
+  }
+  const normalized = String(text).replace(/-/g, "/");
+  const ts = Date.parse(normalized);
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
 export default {
   name: "SessionWorkbenchView",
   data() {
@@ -161,10 +244,18 @@ export default {
       loadingContacts: false,
       loadingMessages: false,
       sending: false,
+      leftTab: "recent",
       keyword: "",
       contacts: [],
+      selectedContactKey: "",
       conversationId: "",
       messageText: "",
+      quickTemplate: "",
+      quickTemplates: [
+        "你好，已收到你的消息。",
+        "这边帮你确认一下，请稍等。",
+        "感谢反馈，我们会尽快处理。",
+      ],
       messages: [],
       lastResponse: null,
     };
@@ -189,6 +280,24 @@ export default {
         );
       });
     },
+    recentContacts() {
+      const list = this.filteredContacts.slice();
+      return list
+        .sort((a, b) => {
+          const unreadScore = (b.unreadCount || 0) - (a.unreadCount || 0);
+          if (unreadScore !== 0) {
+            return unreadScore;
+          }
+          return toTimeScore(b.lastTime) - toTimeScore(a.lastTime);
+        })
+        .slice(0, 18);
+    },
+    selectedContact() {
+      return this.contacts.find((item) => item.key === this.selectedContactKey) || null;
+    },
+    unreadTotal() {
+      return this.contacts.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
+    },
     prettyLastResponse() {
       return JSON.stringify(this.lastResponse || {}, null, 2);
     },
@@ -206,11 +315,35 @@ export default {
     async request(path, data) {
       return requestBySession(this.session, path, data);
     },
+    applyQuickTemplate(value) {
+      if (!value) {
+        return;
+      }
+      this.messageText = value;
+    },
     selectContact(row) {
       if (!row) {
         return;
       }
+      this.selectedContactKey = row.key;
       this.conversationId = inferConversationId(row);
+    },
+    upsertContactSummary({ message, time }) {
+      if (!this.selectedContact) {
+        return;
+      }
+      const idx = this.contacts.findIndex((item) => item.key === this.selectedContact.key);
+      if (idx < 0) {
+        return;
+      }
+      const next = this.contacts.slice();
+      next[idx] = {
+        ...next[idx],
+        lastMessage: message || next[idx].lastMessage,
+        lastTime: time || next[idx].lastTime,
+        unreadCount: 0,
+      };
+      this.contacts = next;
     },
     async loadContacts() {
       this.loadingContacts = true;
@@ -224,6 +357,9 @@ export default {
           return;
         }
         this.contacts = normalizeContacts(payload.data);
+        if (!this.selectedContactKey && this.contacts.length) {
+          this.selectContact(this.contacts[0]);
+        }
       } catch (error) {
         this.$message.error(error.message || "同步联系人失败");
       } finally {
@@ -249,7 +385,13 @@ export default {
         this.messages = normalizeMessages(payload.data);
         if (!this.messages.length) {
           this.$message.info("已请求成功，但暂无可展示的消息");
+          return;
         }
+        const latest = this.messages[0];
+        this.upsertContactSummary({
+          message: latest.content,
+          time: latest.time,
+        });
       } catch (error) {
         this.$message.error(error.message || "拉取消息失败");
       } finally {
@@ -267,10 +409,11 @@ export default {
       }
       this.sending = true;
       try {
+        const content = this.messageText.trim();
         const payload = await this.request("/msg/send_text", {
           guid: this.session.guid,
           conversation_id: this.conversationId,
-          content: this.messageText.trim(),
+          content,
         });
         this.lastResponse = payload;
         const code = getErrorCode(payload);
@@ -279,7 +422,17 @@ export default {
           return;
         }
         this.$message.success("发送成功");
+        this.messages.unshift({
+          sender: "我",
+          content,
+          time: new Date().toLocaleString(),
+        });
+        this.upsertContactSummary({
+          message: content,
+          time: new Date().toLocaleString(),
+        });
         this.messageText = "";
+        this.quickTemplate = "";
       } catch (error) {
         this.$message.error(error.message || "发送失败");
       } finally {
@@ -300,12 +453,12 @@ export default {
 }
 .summary-card .value {
   margin-top: 8px;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: #303133;
 }
 .panel-card {
-  min-height: 620px;
+  min-height: 650px;
 }
 .head {
   display: flex;
@@ -319,18 +472,74 @@ export default {
 .search {
   margin-bottom: 10px;
 }
+.empty {
+  padding-top: 36px;
+}
+.recent-list {
+  max-height: 442px;
+  overflow: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+}
+.recent-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid #f2f3f5;
+  cursor: pointer;
+}
+.recent-item:last-child {
+  border-bottom: none;
+}
+.recent-item.active {
+  background: #ecf5ff;
+}
+.recent-main {
+  min-width: 0;
+  flex: 1;
+}
+.recent-top,
+.recent-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recent-top .name {
+  color: #303133;
+  font-weight: 500;
+}
+.recent-top .time {
+  font-size: 12px;
+  color: #909399;
+}
+.recent-bottom .msg {
+  color: #606266;
+  font-size: 12px;
+}
 .contact-cell {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+.contact-meta {
+  min-width: 0;
+}
+.contact-meta .sub {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
 .inline-form {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+}
+.compose {
+  margin-bottom: 8px;
 }
 .msg-list {
   border: 1px solid #ebeef5;
   border-radius: 6px;
-  max-height: 250px;
+  max-height: 230px;
   overflow: auto;
 }
 .msg-item {
@@ -359,7 +568,7 @@ export default {
   color: #d3dce6;
   padding: 10px;
   border-radius: 4px;
-  max-height: 180px;
+  max-height: 150px;
   overflow: auto;
   font-size: 12px;
 }

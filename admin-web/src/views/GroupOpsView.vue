@@ -1,42 +1,67 @@
 <template>
   <el-row :gutter="12">
-    <el-col :span="10">
+    <el-col :span="11">
       <el-card shadow="never" class="panel-card">
         <div slot="header" class="head">
-          <span>群列表（V2）</span>
+          <div>
+            <span>群列表（V2.1）</span>
+            <el-tag size="mini" type="info" class="ml">已选 {{ selectedGroups.length }}</el-tag>
+          </div>
           <el-button size="mini" :loading="loadingGroups" @click="loadGroups">刷新</el-button>
         </div>
 
+        <div class="filters">
+          <el-input
+            v-model.trim="keyword"
+            size="small"
+            clearable
+            placeholder="筛选群名/群ID"
+            class="grow"
+          />
+          <el-input-number
+            v-model="minMemberCount"
+            size="small"
+            :min="0"
+            :step="10"
+            controls-position="right"
+            placeholder="最少人数"
+          />
+        </div>
+
         <el-table
-          :data="groups"
+          :data="filteredGroups"
           border
-          height="560"
+          height="520"
           row-key="key"
           :highlight-current-row="true"
           @current-change="onSelectGroup"
+          @selection-change="onSelectionChange"
         >
-          <el-table-column label="群名" min-width="180">
+          <el-table-column type="selection" width="44" />
+          <el-table-column label="群名" min-width="170">
             <template slot-scope="{ row }">
               <div class="group-cell">
                 <el-avatar :size="28" :src="row.avatar">{{ getInitial(row.name) }}</el-avatar>
-                <span class="ellipsis">{{ row.name }}</span>
+                <div class="meta">
+                  <span class="ellipsis">{{ row.name }}</span>
+                  <small class="sub ellipsis">{{ row.id }}</small>
+                </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="id" label="群ID" min-width="170" />
-          <el-table-column prop="memberCount" label="人数" width="70" />
+          <el-table-column prop="memberCount" label="人数" width="72" />
         </el-table>
       </el-card>
     </el-col>
 
-    <el-col :span="14">
+    <el-col :span="13">
       <el-card shadow="never" class="panel-card">
         <div slot="header" class="head">
           <span>群运营动作</span>
-          <span class="hint">选中群后可快速发消息或拉详情</span>
+          <span class="hint">支持单群与批量操作</span>
         </div>
 
-        <el-form label-width="120px" size="small">
+        <el-form label-width="118px" size="small">
           <el-form-item label="当前群">
             <el-input :value="selectedGroup ? selectedGroup.name : ''" disabled />
           </el-form-item>
@@ -47,16 +72,54 @@
             <el-input
               v-model="messageText"
               type="textarea"
-              :rows="4"
+              :rows="3"
               placeholder="输入群发文本消息"
             />
           </el-form-item>
           <el-form-item>
             <el-button size="small" :loading="loadingDetail" @click="loadGroupDetail">
-              拉取群详情
+              拉取当前群详情
             </el-button>
             <el-button type="primary" size="small" :loading="sending" @click="sendGroupMessage">
-              发送群消息
+              发送当前群消息
+            </el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-divider content-position="left">批量操作</el-divider>
+        <el-form label-width="118px" size="small">
+          <el-form-item label="已选群">
+            <el-tag
+              v-for="group in selectedGroups.slice(0, 6)"
+              :key="group.key"
+              size="mini"
+              class="tag-gap"
+            >
+              {{ group.name }}
+            </el-tag>
+            <span v-if="selectedGroups.length > 6" class="hint">
+              其余 {{ selectedGroups.length - 6 }} 个...
+            </span>
+          </el-form-item>
+          <el-form-item label="批量消息">
+            <el-input
+              v-model="batchMessageText"
+              type="textarea"
+              :rows="2"
+              placeholder="输入后可批量发送到已选群"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button size="small" :loading="batchingDetail" @click="batchLoadDetail">
+              批量拉详情
+            </el-button>
+            <el-button
+              type="primary"
+              size="small"
+              :loading="batchingSend"
+              @click="batchSendMessage"
+            >
+              批量发消息
             </el-button>
           </el-form-item>
         </el-form>
@@ -75,6 +138,10 @@ import {
   hasBusinessError,
 } from "../api/guidRequest";
 import { requestBySession } from "../api/sessionGateway";
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function asList(value) {
   if (Array.isArray(value)) {
@@ -138,16 +205,36 @@ export default {
       loadingGroups: false,
       loadingDetail: false,
       sending: false,
+      batchingDetail: false,
+      batchingSend: false,
+      keyword: "",
+      minMemberCount: 0,
       groups: [],
       selectedGroup: null,
+      selectedGroups: [],
       conversationId: "",
       messageText: "",
+      batchMessageText: "",
       lastResponse: null,
     };
   },
   computed: {
     session() {
       return this.$store.state.session;
+    },
+    filteredGroups() {
+      return this.groups.filter((item) => {
+        const keywordOk =
+          !this.keyword ||
+          String(item.name || "")
+            .toLowerCase()
+            .includes(this.keyword.toLowerCase()) ||
+          String(item.id || "")
+            .toLowerCase()
+            .includes(this.keyword.toLowerCase());
+        const memberOk = Number(item.memberCount || 0) >= Number(this.minMemberCount || 0);
+        return keywordOk && memberOk;
+      });
     },
     prettyLastResponse() {
       return JSON.stringify(this.lastResponse || {}, null, 2);
@@ -165,6 +252,9 @@ export default {
     },
     async request(path, data) {
       return requestBySession(this.session, path, data);
+    },
+    onSelectionChange(rows) {
+      this.selectedGroups = rows || [];
     },
     onSelectGroup(row) {
       this.selectedGroup = row || null;
@@ -246,13 +336,73 @@ export default {
         this.sending = false;
       }
     },
+    async batchLoadDetail() {
+      if (!this.selectedGroups.length) {
+        this.$message.warning("请先选择群");
+        return;
+      }
+      this.batchingDetail = true;
+      try {
+        const roomIds = this.selectedGroups.map((item) => item.id);
+        const payload = await this.request("/room/batch_get_room_detail", {
+          guid: this.session.guid,
+          room_ids: roomIds,
+        });
+        this.lastResponse = payload;
+        if (hasBusinessError(payload)) {
+          this.$message.error(getErrorMessage(payload) || "批量拉详情失败");
+          return;
+        }
+        this.$message.success(`批量拉取详情完成（${roomIds.length}个群）`);
+      } catch (error) {
+        this.$message.error(error.message || "批量拉详情失败");
+      } finally {
+        this.batchingDetail = false;
+      }
+    },
+    async batchSendMessage() {
+      if (!this.selectedGroups.length) {
+        this.$message.warning("请先选择群");
+        return;
+      }
+      if (!this.batchMessageText.trim()) {
+        this.$message.warning("请输入批量消息内容");
+        return;
+      }
+      this.batchingSend = true;
+      let success = 0;
+      let failed = 0;
+      try {
+        for (const group of this.selectedGroups) {
+          const conversationId = inferGroupConversationId(group);
+          const payload = await this.request("/msg/send_text", {
+            guid: this.session.guid,
+            conversation_id: conversationId,
+            content: this.batchMessageText.trim(),
+          });
+          this.lastResponse = payload;
+          const code = getErrorCode(payload);
+          if (code === 0) {
+            success += 1;
+          } else {
+            failed += 1;
+          }
+          await sleep(120);
+        }
+        this.$message.success(`批量发送完成：成功 ${success}，失败 ${failed}`);
+      } catch (error) {
+        this.$message.error(error.message || "批量发送失败");
+      } finally {
+        this.batchingSend = false;
+      }
+    },
   },
 };
 </script>
 
 <style scoped>
 .panel-card {
-  min-height: 640px;
+  min-height: 670px;
 }
 .head {
   display: flex;
@@ -263,10 +413,34 @@ export default {
   color: #909399;
   font-size: 12px;
 }
+.ml {
+  margin-left: 8px;
+}
+.filters {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.grow {
+  flex: 1;
+}
 .group-cell {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.meta {
+  min-width: 0;
+}
+.sub {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+.tag-gap {
+  margin-right: 6px;
+  margin-bottom: 4px;
 }
 .ellipsis {
   overflow: hidden;
@@ -278,7 +452,7 @@ export default {
   color: #d3dce6;
   padding: 10px;
   border-radius: 4px;
-  max-height: 280px;
+  max-height: 190px;
   overflow: auto;
   font-size: 12px;
 }

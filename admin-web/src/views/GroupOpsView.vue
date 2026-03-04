@@ -168,6 +168,13 @@ function normalizeGroups(rawData) {
       row.id ||
       row.chat_id ||
       "";
+    const roomId =
+      row.room_id ||
+      row.group_id ||
+      row.chat_id ||
+      row.id ||
+      (typeof id === "string" ? id.replace(/^R:/, "") : id) ||
+      "";
     const name = row.room_name || row.group_name || row.name || row.nickname || "未命名群";
     const memberCount = Number(
       row.member_count || row.members || row.total_member_count || 0,
@@ -177,6 +184,7 @@ function normalizeGroups(rawData) {
     return {
       key: id || `group_${index}`,
       id: String(id),
+      roomId: String(roomId),
       name: String(name),
       avatar: String(avatar),
       memberCount,
@@ -196,6 +204,16 @@ function inferGroupConversationId(group) {
     return `R:${group.id}`;
   }
   return group.id;
+}
+
+function inferRoomId(group) {
+  if (!group) {
+    return "";
+  }
+  if (group.roomId) {
+    return String(group.roomId).replace(/^R:/, "");
+  }
+  return String(group.id || "").replace(/^R:/, "");
 }
 
 export default {
@@ -267,6 +285,8 @@ export default {
       try {
         const payload = await this.request("/room/get_room_list", {
           guid: this.session.guid,
+          start_index: 0,
+          limit: 200,
         });
         this.lastResponse = payload;
         if (hasBusinessError(payload)) {
@@ -290,9 +310,10 @@ export default {
       }
       this.loadingDetail = true;
       try {
+        const roomId = inferRoomId(this.selectedGroup);
         const payload = await this.request("/room/batch_get_room_detail", {
           guid: this.session.guid,
-          room_ids: [this.selectedGroup.id],
+          room_list: roomId ? [roomId] : [],
         });
         this.lastResponse = payload;
         if (hasBusinessError(payload)) {
@@ -343,10 +364,12 @@ export default {
       }
       this.batchingDetail = true;
       try {
-        const roomIds = this.selectedGroups.map((item) => item.id);
+        const roomIds = this.selectedGroups
+          .map((item) => inferRoomId(item))
+          .filter(Boolean);
         const payload = await this.request("/room/batch_get_room_detail", {
           guid: this.session.guid,
-          room_ids: roomIds,
+          room_list: roomIds,
         });
         this.lastResponse = payload;
         if (hasBusinessError(payload)) {

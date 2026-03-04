@@ -1,0 +1,39 @@
+{
+  "name": "qiwei-apifox-sdk",
+  "version": "0.1.0",
+  "description": "企微协议 SAAS API TypeScript SDK",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "sync:endpoints": "node scripts/sync-endpoints.mjs",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "example": "tsx examples/login-and-send-text.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangjienihao/qiwei.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wangjienihao/qiwei/issues"
+  },
+  "homepage": "https://github.com/wangjienihao/qiwei#readme",
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

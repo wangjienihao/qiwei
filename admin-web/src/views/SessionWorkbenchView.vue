@@ -82,6 +82,15 @@
           </el-tag>
         </div>
         <div class="header-actions">
+          <div class="realtime-box">
+            <span class="sync-time">{{ lastSyncAt ? `同步: ${lastSyncAt}` : "未同步" }}</span>
+            <el-switch
+              v-model="realtimeEnabled"
+              active-text="实时"
+              inactive-text="手动"
+              @change="onRealtimeToggle"
+            />
+          </div>
           <el-button size="mini" :disabled="!conversationId" @click="copyConversationId">
             复制会话ID
           </el-button>
@@ -453,15 +462,43 @@ function normalizeMessages(rawData, profileName) {
         "created_at",
       ]);
       const ts = toTimestamp(tsRaw);
+      const messageId = String(
+        pickFirst(item, [
+          "msg_id",
+          "message_id",
+          "id",
+          "client_msg_id",
+          "server_msg_id",
+        ]) || "",
+      );
       return {
         sender,
         content: buildMessageContent(item),
         ts,
         time: formatTime(tsRaw),
+        messageId,
         isOutgoing: inferOutgoing(item, profileName),
       };
     })
     .sort((a, b) => a.ts - b.ts);
+}
+
+function getMessageIdentity(msg) {
+  if (msg.messageId) {
+    return `id:${msg.messageId}`;
+  }
+  return `t:${msg.ts}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
+}
+
+function mergeMessageArrays(existing, incoming) {
+  const map = new Map();
+  existing.forEach((item) => {
+    map.set(getMessageIdentity(item), item);
+  });
+  incoming.forEach((item) => {
+    map.set(getMessageIdentity(item), item);
+  });
+  return Array.from(map.values()).sort((a, b) => a.ts - b.ts);
 }
 
 function inferConversationKind(contact) {
@@ -482,6 +519,11 @@ export default {
       debugVisible: false,
       detailVisible: false,
       contactDetailLoading: false,
+      realtimeEnabled: true,
+      realtimeIntervalMs: 3000,
+      realtimeTimer: null,
+      realtimeBusy: false,
+      lastSyncAt: "",
       conversationFilter: "all",
       keyword: "",
       contacts: [],
@@ -638,6 +680,9 @@ export default {
     this.loadTagMap();
     this.loadContacts();
   },
+  beforeDestroy() {
+    this.stopRealtimePolling();
+  },
   methods: {
     getInitial(text) {
       if (!text) {
@@ -647,6 +692,96 @@ export default {
     },
     async request(path, data) {
       return requestBySession(this.session, path, data);
+    },
+    updateLastSyncTime() {
+      this.lastSyncAt = formatTime(Date.now());
+    },
+    onRealtimeToggle() {
+      this.restartRealtimePolling();
+      if (this.realtimeEnabled && this.conversationId) {
+        this.syncMessages({ silent: true });
+      }
+    },
+    startRealtimePolling() {
+      if (!this.realtimeEnabled || !this.conversationId) {
+        return;
+      }
+      this.stopRealtimePolling();
+      this.realtimeTimer = setInterval(() => {
+        this.syncMessages({ silent: true });
+      }, this.realtimeIntervalMs);
+    },
+    stopRealtimePolling() {
+      if (this.realtimeTimer) {
+        clearInterval(this.realtimeTimer);
+      }
+      this.realtimeTimer = null;
+    },
+    restartRealtimePolling() {
+      this.stopRealtimePolling();
+      this.startRealtimePolling();
+    },
+    async syncMessages({ silent = false } = {}) {
+      if (!this.conversationId) {
+        return;
+      }
+      if (this.realtimeBusy) {
+        return;
+      }
+      const currentConversationId = this.conversationId;
+      this.realtimeBusy = true;
+      if (!silent) {
+        this.loadingMessages = true;
+      }
+      try {
+        const payload = await this.request("/sync/sync_msg", {
+          guid: this.session.guid,
+          conversation_id: currentConversationId,
+        });
+        // Ignore stale response from old conversation.
+        if (currentConversationId !== this.conversationId) {
+          return;
+        }
+        this.lastResponse = payload;
+        if (hasBusinessError(payload)) {
+          if (!silent) {
+            this.$message.error(getErrorMessage(payload) || "拉取消息失败");
+          }
+          return;
+        }
+
+        const incoming = normalizeMessages(payload.data, this.profileName);
+        const existingIdentitySet = new Set(this.messages.map(getMessageIdentity));
+        const merged = mergeMessageArrays(this.messages, incoming);
+        const newItems = merged.filter((item) => !existingIdentitySet.has(getMessageIdentity(item)));
+        this.messages = merged;
+        this.updateLastSyncTime();
+
+        if (!this.messages.length) {
+          return;
+        }
+        const latest = this.messages[this.messages.length - 1];
+        this.touchContactSummary({
+          message: latest.content,
+          time: latest.time,
+        });
+        if (this.selectedContact) {
+          const hasNewIncoming = newItems.some((item) => !item.isOutgoing);
+          this.markPendingState(
+            this.selectedContact.key,
+            hasNewIncoming && Number(this.selectedContact.unreadCount || 0) === 0,
+          );
+        }
+      } catch (error) {
+        if (!silent) {
+          this.$message.error(error.message || "拉取消息失败");
+        }
+      } finally {
+        if (!silent) {
+          this.loadingMessages = false;
+        }
+        this.realtimeBusy = false;
+      }
     },
     isContactPending(contact) {
       if (!contact) {
@@ -778,7 +913,9 @@ export default {
       }
       this.selectedContactKey = contact.key;
       this.conversationId = inferConversationId(contact);
-      this.loadMessages();
+      this.messages = [];
+      await this.syncMessages({ silent: false });
+      this.restartRealtimePolling();
     },
     async nextPendingConversation() {
       const list = this.contacts
@@ -837,6 +974,13 @@ export default {
         });
         this.pendingMap = nextPending;
         this.contacts = nextContacts;
+        if (!this.contacts.length) {
+          this.selectedContactKey = "";
+          this.conversationId = "";
+          this.messages = [];
+          this.stopRealtimePolling();
+          return;
+        }
         if (!this.selectedContactKey && this.contacts.length) {
           this.selectContact(this.contacts[0]);
           return;
@@ -855,40 +999,7 @@ export default {
       }
     },
     async loadMessages() {
-      if (!this.conversationId) {
-        return;
-      }
-      this.loadingMessages = true;
-      try {
-        const payload = await this.request("/sync/sync_msg", {
-          guid: this.session.guid,
-          conversation_id: this.conversationId,
-        });
-        this.lastResponse = payload;
-        if (hasBusinessError(payload)) {
-          this.$message.error(getErrorMessage(payload) || "拉取消息失败");
-          return;
-        }
-        this.messages = normalizeMessages(payload.data, this.profileName);
-        if (!this.messages.length) {
-          return;
-        }
-        const latest = this.messages[this.messages.length - 1];
-        this.touchContactSummary({
-          message: latest.content,
-          time: latest.time,
-        });
-        if (this.selectedContact) {
-          this.markPendingState(
-            this.selectedContact.key,
-            !latest.isOutgoing && Number(this.selectedContact.unreadCount || 0) === 0,
-          );
-        }
-      } catch (error) {
-        this.$message.error(error.message || "拉取消息失败");
-      } finally {
-        this.loadingMessages = false;
-      }
+      await this.syncMessages({ silent: false });
     },
     async sendText() {
       if (!this.conversationId) {
@@ -1080,7 +1191,21 @@ export default {
 
 .header-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.realtime-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 4px;
+  border-right: 1px solid #ebeef5;
+}
+
+.sync-time {
+  font-size: 12px;
+  color: #909399;
 }
 
 .chat-messages {

@@ -143,6 +143,31 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getByPath(target, path) {
+  if (!target || typeof target !== "object") {
+    return undefined;
+  }
+  const segments = String(path).split(".");
+  let current = target;
+  for (let i = 0; i < segments.length; i += 1) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[segments[i]];
+  }
+  return current;
+}
+
+function pickFirst(row, keys) {
+  for (const key of keys) {
+    const value = key.includes(".") ? getByPath(row, key) : row[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
 function asList(value) {
   if (Array.isArray(value)) {
     return value;
@@ -150,43 +175,85 @@ function asList(value) {
   if (!value || typeof value !== "object") {
     return [];
   }
-  const keys = ["list", "items", "rows", "room_list", "rooms", "group_list"];
+  const keys = [
+    "list",
+    "items",
+    "rows",
+    "room_list",
+    "rooms",
+    "group_list",
+    "datas",
+    "roomdata.datas",
+    "roomdata.list",
+    "room_data.datas",
+    "room_data.list",
+  ];
   for (const key of keys) {
-    if (Array.isArray(value[key])) {
-      return value[key];
+    const rows = key.includes(".") ? getByPath(value, key) : value[key];
+    if (Array.isArray(rows)) {
+      return rows;
     }
   }
   return [];
 }
 
+function toConversationId(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.startsWith("R:")) {
+    return text;
+  }
+  if (text.startsWith("10")) {
+    return `R:${text}`;
+  }
+  return text;
+}
+
 function normalizeGroups(rawData) {
   return asList(rawData).map((row, index) => {
-    const id =
-      row.conversation_id ||
-      row.room_id ||
-      row.group_id ||
-      row.id ||
-      row.chat_id ||
-      "";
-    const roomId =
-      row.room_id ||
-      row.group_id ||
-      row.chat_id ||
-      row.id ||
-      (typeof id === "string" ? id.replace(/^R:/, "") : id) ||
-      "";
-    const name = row.room_name || row.group_name || row.name || row.nickname || "未命名群";
-    const memberCount = Number(
-      row.member_count || row.members || row.total_member_count || 0,
+    const rawConversationId = pickFirst(row, [
+      "conversation_id",
+      "conversationId",
+      "roomid",
+      "room_id",
+      "roomId",
+      "group_id",
+      "chat_id",
+      "id",
+    ]);
+    const id = toConversationId(rawConversationId);
+    const roomId = String(
+      pickFirst(row, [
+        "roomid",
+        "room_id",
+        "roomId",
+        "group_id",
+        "chat_id",
+        "conversation_id",
+        "conversationId",
+        "id",
+      ]) || "",
+    ).replace(/^R:/, "");
+    const recordId = String(pickFirst(row, ["id", "roomid", "room_id"]) || "");
+    const name = String(
+      pickFirst(row, ["roomname", "room_name", "group_name", "name", "nickname"]) ||
+        "未命名群",
     );
-    const avatar = row.avatar || row.head_img || row.icon || "";
+    const memberCount = Number(
+      pickFirst(row, ["member_count", "memberCount", "members", "total_member_count"]) || 0,
+    );
+    const avatar = String(
+      pickFirst(row, ["roomurl", "room_url", "avatar", "head_img", "icon"]) || "",
+    );
 
     return {
-      key: id || `group_${index}`,
+      key: id || roomId || recordId || `group_${index}`,
       id: String(id),
-      roomId: String(roomId),
-      name: String(name),
-      avatar: String(avatar),
+      roomId,
+      name,
+      avatar,
       memberCount,
       raw: row,
     };
@@ -248,6 +315,9 @@ export default {
             .toLowerCase()
             .includes(this.keyword.toLowerCase()) ||
           String(item.id || "")
+            .toLowerCase()
+            .includes(this.keyword.toLowerCase()) ||
+          String(item.roomId || "")
             .toLowerCase()
             .includes(this.keyword.toLowerCase());
         const memberOk = Number(item.memberCount || 0) >= Number(this.minMemberCount || 0);

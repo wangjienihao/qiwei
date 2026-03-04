@@ -63,89 +63,170 @@
           <span class="target-id">{{ conversationId || "-" }}</span>
         </div>
         <div class="header-actions">
+          <el-button size="mini" :disabled="!conversationId" @click="copyConversationId">
+            复制会话ID
+          </el-button>
+          <el-button
+            size="mini"
+            :disabled="!selectedContact"
+            :loading="contactDetailLoading"
+            @click="syncContactDetail"
+          >
+            同步资料
+          </el-button>
           <el-button size="mini" :loading="loadingContacts" @click="loadContacts">
             刷新会话
           </el-button>
           <el-button size="mini" :loading="loadingMessages" @click="loadMessages">
             拉取消息
           </el-button>
+          <el-button size="mini" :disabled="!messages.length" @click="clearMessages">
+            清空窗口
+          </el-button>
           <el-button size="mini" @click="debugVisible = true">调试</el-button>
         </div>
       </div>
 
-      <div ref="msgViewport" class="chat-messages">
-        <el-empty
-          v-if="!selectedContact"
-          :image-size="90"
-          description="左侧选择会话后开始聊天"
-        />
-        <el-empty
-          v-else-if="!messages.length"
-          :image-size="90"
-          description="暂无消息，点击右上角“拉取消息”"
-        />
-        <div v-else class="message-stream">
-          <div
-            v-for="(item, index) in messages"
-            :key="index"
-            class="message-row"
-            :class="{ outgoing: item.isOutgoing }"
-          >
-            <el-avatar
-              v-if="!item.isOutgoing"
-              :src="selectedContact ? selectedContact.avatar : ''"
-              :size="32"
-              class="msg-avatar"
-            >
-              {{ getInitial(item.sender || selectedContact.nickname) }}
-            </el-avatar>
+      <div class="chat-body">
+        <div class="chat-thread">
+          <div ref="msgViewport" class="chat-messages">
+            <el-empty
+              v-if="!selectedContact"
+              :image-size="90"
+              description="左侧选择会话后开始聊天"
+            />
+            <el-empty
+              v-else-if="!messages.length"
+              :image-size="90"
+              description="暂无消息，点击右上角“拉取消息”"
+            />
+            <div v-else class="message-stream">
+              <template v-for="item in displayMessages">
+                <div v-if="item.kind === 'divider'" :key="item.key" class="time-divider">
+                  <span>{{ item.label }}</span>
+                </div>
+                <div
+                  v-else
+                  :key="item.key"
+                  class="message-row"
+                  :class="{ outgoing: item.isOutgoing }"
+                >
+                  <el-avatar
+                    v-if="!item.isOutgoing"
+                    :src="selectedContact ? selectedContact.avatar : ''"
+                    :size="32"
+                    class="msg-avatar"
+                  >
+                    {{ getInitial(item.sender || selectedContact.nickname) }}
+                  </el-avatar>
 
-            <div class="msg-body">
-              <div class="msg-meta">
-                <span>{{ item.isOutgoing ? profileName : item.sender || selectedContact.nickname }}</span>
-                <span>{{ item.time || "-" }}</span>
-              </div>
-              <div class="msg-bubble">{{ item.content || "-" }}</div>
+                  <div class="msg-body">
+                    <div class="msg-meta">
+                      <span>
+                        {{ item.isOutgoing ? profileName : item.sender || selectedContact.nickname }}
+                      </span>
+                      <span>{{ item.time || "-" }}</span>
+                    </div>
+                    <div class="msg-bubble">{{ item.content || "-" }}</div>
+                  </div>
+
+                  <el-avatar
+                    v-if="item.isOutgoing"
+                    :src="profileAvatar"
+                    :size="32"
+                    class="msg-avatar"
+                  >
+                    {{ getInitial(profileName) }}
+                  </el-avatar>
+                </div>
+              </template>
             </div>
+          </div>
 
-            <el-avatar
-              v-if="item.isOutgoing"
-              :src="profileAvatar"
-              :size="32"
-              class="msg-avatar"
-            >
-              {{ getInitial(profileName) }}
-            </el-avatar>
+          <div class="chat-compose">
+            <div class="template-row">
+              <el-tag
+                v-for="template in quickTemplates"
+                :key="template"
+                size="mini"
+                class="template-tag"
+                @click="applyQuickTemplate(template)"
+              >
+                {{ template }}
+              </el-tag>
+            </div>
+            <el-input
+              v-model="messageText"
+              type="textarea"
+              :rows="3"
+              resize="none"
+              placeholder="输入消息，Ctrl + Enter 快速发送"
+              @keydown.native.ctrl.enter="sendText"
+            />
+            <div class="compose-actions">
+              <span class="hint">仅支持文本消息，更多类型后续扩展</span>
+              <el-button type="primary" size="mini" :loading="sending" @click="sendText">
+                发送
+              </el-button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="chat-compose">
-        <div class="template-row">
-          <el-tag
-            v-for="template in quickTemplates"
-            :key="template"
-            size="mini"
-            class="template-tag"
-            @click="applyQuickTemplate(template)"
-          >
-            {{ template }}
-          </el-tag>
-        </div>
-        <el-input
-          v-model="messageText"
-          type="textarea"
-          :rows="3"
-          resize="none"
-          placeholder="输入消息，Ctrl + Enter 快速发送"
-          @keydown.native.ctrl.enter="sendText"
-        />
-        <div class="compose-actions">
-          <span class="hint">仅支持文本消息，更多类型后续扩展</span>
-          <el-button type="primary" size="mini" :loading="sending" @click="sendText">
-            发送
-          </el-button>
-        </div>
+        <aside class="chat-detail">
+          <div class="detail-head">会话信息</div>
+          <div v-if="!selectedContact" class="detail-empty">
+            <el-empty :image-size="72" description="未选择会话" />
+          </div>
+          <template v-else>
+            <div class="detail-profile">
+              <el-avatar :src="selectedContact.avatar" :size="54">
+                {{ getInitial(selectedContact.nickname) }}
+              </el-avatar>
+              <div class="detail-main">
+                <div class="nickname">{{ selectedContact.nickname }}</div>
+                <div class="subid">{{ selectedContact.id }}</div>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <div class="block-title">会话摘要</div>
+              <div class="detail-item">
+                <span>会话类型</span>
+                <el-tag size="mini" :type="selectedContactKind === 'group' ? 'warning' : 'success'">
+                  {{ selectedContactKind === "group" ? "群聊" : "单聊" }}
+                </el-tag>
+              </div>
+              <div class="detail-item">
+                <span>未读数</span>
+                <b>{{ selectedContact.unreadCount || 0 }}</b>
+              </div>
+              <div class="detail-item">
+                <span>最近时间</span>
+                <b>{{ selectedContact.lastTime || "-" }}</b>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <div class="block-title">标签</div>
+              <div class="tag-list">
+                <el-tag
+                  v-for="tag in selectedContactTags"
+                  :key="tag.id"
+                  size="mini"
+                  class="mini-gap"
+                >
+                  {{ tag.name }}
+                </el-tag>
+                <span v-if="!selectedContactTags.length" class="hint">暂无标签</span>
+              </div>
+            </div>
+
+            <div class="detail-block">
+              <div class="block-title">接口详情</div>
+              <pre class="detail-json">{{ prettyContactDetail }}</pre>
+            </div>
+          </template>
+        </aside>
       </div>
     </section>
 
@@ -169,6 +250,8 @@ import {
 import { requestBySession } from "../api/sessionGateway";
 import { inferConversationId, normalizeContacts } from "../utils/contact";
 
+const TAG_ASSIGNMENT_STORAGE_KEY = "qiwei_tag_assignments_v1";
+
 function asList(value) {
   if (Array.isArray(value)) {
     return value;
@@ -176,7 +259,17 @@ function asList(value) {
   if (!value || typeof value !== "object") {
     return [];
   }
-  const candidateKeys = ["list", "items", "rows", "messages", "msg_list", "records"];
+  const candidateKeys = [
+    "list",
+    "items",
+    "rows",
+    "messages",
+    "msg_list",
+    "records",
+    "label_list",
+    "labels",
+    "data",
+  ];
   for (const key of candidateKeys) {
     if (Array.isArray(value[key])) {
       return value[key];
@@ -211,6 +304,32 @@ function formatTime(raw) {
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `${month}-${day} ${hour}:${minute}`;
+}
+
+function formatDividerLabel(ts) {
+  if (!ts) {
+    return "";
+  }
+  const date = new Date(ts);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function isSameDay(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
 }
 
 function pickFirst(item, keys) {
@@ -346,6 +465,10 @@ export default {
         "收到，稍后第一时间回复你。",
       ],
       messages: [],
+      contactDetailLoading: false,
+      contactDetail: null,
+      assignmentMap: {},
+      tagNameMap: {},
       lastResponse: null,
     };
   },
@@ -369,6 +492,60 @@ export default {
     },
     selectedContact() {
       return this.contacts.find((item) => item.key === this.selectedContactKey) || null;
+    },
+    selectedContactKind() {
+      if (!this.selectedContact) {
+        return "single";
+      }
+      return inferConversationKind(this.selectedContact);
+    },
+    selectedContactTags() {
+      if (!this.selectedContact) {
+        return [];
+      }
+      const rawId = String(this.selectedContact.id || "");
+      const candidates = [rawId, rawId.replace(/^S:/, ""), rawId.replace(/^R:/, "")];
+      let ids = [];
+      for (const id of candidates) {
+        if (Array.isArray(this.assignmentMap[id]) && this.assignmentMap[id].length) {
+          ids = this.assignmentMap[id];
+          break;
+        }
+      }
+      return ids.map((id) => ({
+        id,
+        name: this.tagNameMap[id] || id,
+      }));
+    },
+    prettyContactDetail() {
+      return JSON.stringify(this.contactDetail || {}, null, 2);
+    },
+    displayMessages() {
+      const rows = [];
+      let lastTs = 0;
+      for (let i = 0; i < this.messages.length; i += 1) {
+        const item = this.messages[i];
+        const ts = item.ts || 0;
+        const needDivider =
+          i === 0 ||
+          !lastTs ||
+          !isSameDay(lastTs, ts) ||
+          Math.abs(ts - lastTs) > 5 * 60 * 1000;
+        if (needDivider) {
+          rows.push({
+            kind: "divider",
+            key: `d_${i}_${ts || i}`,
+            label: formatDividerLabel(ts),
+          });
+        }
+        rows.push({
+          ...item,
+          kind: "message",
+          key: `m_${i}_${ts || i}`,
+        });
+        lastTs = ts;
+      }
+      return rows;
     },
     visibleContacts() {
       const query = this.keyword.toLowerCase();
@@ -415,8 +592,13 @@ export default {
     messages() {
       this.$nextTick(this.scrollToBottom);
     },
+    selectedContactKey() {
+      this.contactDetail = null;
+    },
   },
   created() {
+    this.restoreAssignmentMap();
+    this.loadTagMap();
     this.loadContacts();
   },
   methods: {
@@ -429,8 +611,83 @@ export default {
     async request(path, data) {
       return requestBySession(this.session, path, data);
     },
+    restoreAssignmentMap() {
+      try {
+        const raw = window.localStorage.getItem(TAG_ASSIGNMENT_STORAGE_KEY);
+        if (!raw) {
+          this.assignmentMap = {};
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        this.assignmentMap = parsed && typeof parsed === "object" ? parsed : {};
+      } catch (error) {
+        this.assignmentMap = {};
+      }
+    },
+    async loadTagMap() {
+      try {
+        const payload = await this.request("/label/sync_label_list", {
+          guid: this.session.guid,
+        });
+        if (hasBusinessError(payload)) {
+          return;
+        }
+        const map = {};
+        asList(payload.data).forEach((row) => {
+          const id = String(row.id || row.label_id || row.tag_id || "");
+          const name = String(row.name || row.label_name || row.tag_name || "");
+          if (id) {
+            map[id] = name || id;
+          }
+        });
+        this.tagNameMap = map;
+      } catch (error) {
+        // Ignore tag load errors in chat view.
+      }
+    },
     applyQuickTemplate(template) {
       this.messageText = template;
+    },
+    async copyConversationId() {
+      if (!this.conversationId) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(this.conversationId);
+        this.$message.success("会话ID已复制");
+      } catch (error) {
+        this.$message.warning("复制失败，请手动复制");
+      }
+    },
+    clearMessages() {
+      this.messages = [];
+    },
+    async syncContactDetail() {
+      if (!this.selectedContact) {
+        return;
+      }
+      this.contactDetailLoading = true;
+      try {
+        const rawId = String(this.selectedContact.id || "");
+        const userId = rawId.replace(/^S:/, "").replace(/^R:/, "");
+        const payload = await this.request("/contact/batch_get_userinfo", {
+          guid: this.session.guid,
+          user_ids: [userId],
+          contact_ids: [userId],
+          ids: [userId],
+        });
+        this.lastResponse = payload;
+        if (hasBusinessError(payload)) {
+          this.$message.error(getErrorMessage(payload) || "同步资料失败");
+          return;
+        }
+        this.contactDetail = payload.data || {};
+        this.$message.success("资料同步成功");
+      } catch (error) {
+        this.$message.error(error.message || "同步资料失败");
+      } finally {
+        this.contactDetailLoading = false;
+      }
     },
     scrollToBottom() {
       if (!this.$refs.msgViewport) {
@@ -558,6 +815,7 @@ export default {
           time,
         });
         this.messageText = "";
+        this.scrollToBottom();
       } catch (error) {
         this.$message.error(error.message || "发送失败");
       } finally {
@@ -590,6 +848,21 @@ export default {
   padding: 10px;
   border-bottom: 1px solid #ebeef5;
   background: #f5f7fa;
+}
+
+.sidebar-tabs ::v-deep .el-radio-button__inner {
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #606266;
+  padding: 6px 10px;
+  box-shadow: none;
+}
+
+.sidebar-tabs ::v-deep .el-radio-button__orig-radio:checked + .el-radio-button__inner {
+  background: #e6f1ff;
+  color: #2f77ff;
+  box-shadow: none;
 }
 
 .sidebar-search {
@@ -658,6 +931,100 @@ export default {
   flex-direction: column;
 }
 
+.chat-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.chat-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-detail {
+  width: 250px;
+  border-left: 1px solid #ebeef5;
+  background: #fcfcfd;
+  padding: 10px;
+  overflow: auto;
+}
+
+.detail-head {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 10px;
+}
+
+.detail-empty {
+  padding-top: 40px;
+}
+
+.detail-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-main {
+  min-width: 0;
+}
+
+.nickname {
+  font-size: 14px;
+  color: #303133;
+  font-weight: 500;
+}
+
+.subid {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 3px;
+  word-break: break-all;
+}
+
+.detail-block {
+  margin-top: 14px;
+}
+
+.block-title {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.tag-list {
+  min-height: 24px;
+}
+
+.mini-gap {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.detail-json {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 11px;
+  max-height: 200px;
+  overflow: auto;
+}
+
 .chat-header {
   height: 56px;
   border-bottom: 1px solid #ebeef5;
@@ -699,6 +1066,19 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.time-divider {
+  display: flex;
+  justify-content: center;
+}
+
+.time-divider span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #edf2fa;
+  color: #909399;
+  font-size: 12px;
 }
 
 .message-row {

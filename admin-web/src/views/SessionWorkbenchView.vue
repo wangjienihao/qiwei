@@ -939,7 +939,7 @@ function normalizeMessages(rawData, profileName) {
       };
     })
     .filter((item) => isDisplayableMessage(item))
-    .sort((a, b) => a.ts - b.ts);
+    .sort(compareMessagesByTime);
 }
 
 function getMessageIdentity(msg) {
@@ -954,6 +954,33 @@ function getMessageIdentity(msg) {
     (Array.isArray(msg.receiverCandidates) && msg.receiverCandidates[0]) ||
     "";
   return `t:${msg.ts}|cv:${conversationKey}|s:${msg.sender}|c:${msg.content}|o:${Number(msg.isOutgoing)}`;
+}
+
+function getSortableMessageTs(message) {
+  const ts = Number(message && message.ts ? message.ts : 0);
+  if (Number.isFinite(ts) && ts > 0) {
+    return ts;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function compareMessagesByTime(a, b) {
+  const aTs = getSortableMessageTs(a);
+  const bTs = getSortableMessageTs(b);
+  if (aTs !== bTs) {
+    return aTs - bTs;
+  }
+  const aTime = normalizeVisibleText(a && a.time);
+  const bTime = normalizeVisibleText(b && b.time);
+  if (aTime !== bTime) {
+    return aTime.localeCompare(bTime);
+  }
+  const aKey = getMessageIdentity(a || {});
+  const bKey = getMessageIdentity(b || {});
+  if (aKey === bKey) {
+    return 0;
+  }
+  return aKey > bKey ? 1 : -1;
 }
 
 function normalizeTextForDedupe(value) {
@@ -1133,7 +1160,7 @@ function mergeMessageArrays(existing, incoming, maxSize = MAX_MESSAGE_CACHE) {
     changed = true;
     newItems.push(item);
   });
-  let merged = mergedList.slice().sort((a, b) => a.ts - b.ts);
+  let merged = mergedList.slice().sort(compareMessagesByTime);
   let trimmed = false;
   if (maxSize > 0 && merged.length > maxSize) {
     merged = merged.slice(merged.length - maxSize);

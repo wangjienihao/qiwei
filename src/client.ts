@@ -4,8 +4,22 @@ import {
   type WeworkEndpoint,
 } from "./endpoints.js";
 
+export type WeworkRequestMode = "direct" | "guid_request";
+
+export interface GuidRequestOptions {
+  appKey: string;
+  appSecret: string;
+  /**
+   * Wrapper path on gateway.
+   * Defaults to "/open/GuidRequest".
+   */
+  endpoint?: string;
+}
+
 export interface WeworkClientOptions {
   baseUrl: string;
+  mode?: WeworkRequestMode;
+  guidRequest?: GuidRequestOptions;
   timeoutMs?: number;
   headers?: Record<string, string>;
   /**
@@ -75,6 +89,34 @@ function isBusinessResponse(value: unknown): value is WeworkApiResponse {
   );
 }
 
+function getBusinessError(
+  value: unknown,
+): { code: number; message: string } | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  if (
+    typeof value.error_code === "number" &&
+    typeof value.error_message === "string" &&
+    value.error_code !== 0
+  ) {
+    return { code: value.error_code, message: value.error_message };
+  }
+
+  if (typeof value.code === "number" && value.code !== 0) {
+    const message =
+      (typeof value.msg === "string" && value.msg) ||
+      (typeof value.message === "string" && value.message) ||
+      (typeof value.error_message === "string" && value.error_message) ||
+      "unknown business error";
+
+    return { code: value.code, message };
+  }
+
+  return undefined;
+}
+
 function createApiTree(client: WeworkClient): WeworkApiTree {
   const api: Partial<WeworkApiTree> = {};
 
@@ -107,6 +149,12 @@ function createApiTree(client: WeworkClient): WeworkApiTree {
 
 export class WeworkClient {
   readonly baseUrl: string;
+  readonly mode: WeworkRequestMode;
+  readonly guidRequest: {
+    appKey: string;
+    appSecret: string;
+    endpoint: string;
+  } | null;
   readonly timeoutMs: number;
   readonly defaultHeaders: Record<string, string>;
   readonly throwOnBusinessError: boolean;
@@ -120,7 +168,24 @@ export class WeworkClient {
     // Validate URL early.
     new URL(normalizedBase);
 
+    const mode =
+      options.mode ?? (options.guidRequest ? "guid_request" : "direct");
+    if (mode === "guid_request" && !options.guidRequest) {
+      throw new Error(
+        'WeworkClient mode "guid_request" requires options.guidRequest.',
+      );
+    }
+
     this.baseUrl = normalizedBase;
+    this.mode = mode;
+    this.guidRequest =
+      mode === "guid_request"
+        ? {
+            appKey: options.guidRequest!.appKey,
+            appSecret: options.guidRequest!.appSecret,
+            endpoint: options.guidRequest!.endpoint ?? "/open/GuidRequest",
+          }
+        : null;
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.defaultHeaders = options.headers ?? {};
     this.throwOnBusinessError = options.throwOnBusinessError ?? true;
@@ -145,14 +210,29 @@ export class WeworkClient {
     }, timeoutMs);
 
     try {
-      const response = await fetch(new URL(endpoint, this.baseUrl), {
+      const requestUrl =
+        this.mode === "guid_request"
+          ? new URL(this.guidRequest!.endpoint, this.baseUrl)
+          : new URL(endpoint, this.baseUrl);
+
+      const requestBody =
+        this.mode === "guid_request"
+          ? {
+              app_key: this.guidRequest!.appKey,
+              app_secret: this.guidRequest!.appSecret,
+              path: endpoint,
+              data: body ?? {},
+            }
+          : (body ?? {});
+
+      const response = await fetch(requestUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           ...this.defaultHeaders,
           ...options.headers,
         },
-        body: JSON.stringify(body ?? {}),
+        body: JSON.stringify(requestBody),
         signal,
       });
 
@@ -196,6 +276,21 @@ export class WeworkClient {
             payload,
           },
         );
+      }
+
+      if (this.throwOnBusinessError) {
+        const businessError = getBusinessError(payload);
+        if (businessError) {
+          throw new WeworkApiError(
+            `Business error ${businessError.code}: ${businessError.message}`,
+            {
+              status: response.status,
+              endpoint,
+              code: businessError.code,
+              payload,
+            },
+          );
+        }
       }
 
       return payload as WeworkApiResponse<T>;

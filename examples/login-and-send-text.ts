@@ -1,4 +1,4 @@
-import { WeworkClient } from "../src/index.js";
+import { WeworkClient, type WeworkClientOptions } from "../src/index.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -13,15 +13,35 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const baseUrl = process.env.WEWORK_BASE_URL ?? "http://127.0.0.1:7600";
+  const useGuidRequest = process.env.WEWORK_USE_GUID_REQUEST === "true";
+  const baseUrl = process.env.WEWORK_BASE_URL
+    ? process.env.WEWORK_BASE_URL
+    : useGuidRequest
+      ? "https://chat-api.juhebot.com"
+      : "http://127.0.0.1:7600";
   const guid = requireEnv("WEWORK_GUID");
   const conversationId = process.env.WEWORK_CONVERSATION_ID;
   const message = process.env.WEWORK_TEXT ?? "Hello from wework sdk";
 
-  const client = new WeworkClient({
-    baseUrl,
-    timeoutMs: 20_000,
-  });
+  const clientOptions: WeworkClientOptions = useGuidRequest
+    ? {
+        baseUrl,
+        mode: "guid_request",
+        guidRequest: {
+          appKey: requireEnv("WEWORK_APP_KEY"),
+          appSecret: requireEnv("WEWORK_APP_SECRET"),
+          endpoint:
+            process.env.WEWORK_GUID_REQUEST_PATH ?? "/open/GuidRequest",
+        },
+        timeoutMs: 20_000,
+      }
+    : {
+        baseUrl,
+        mode: "direct",
+        timeoutMs: 20_000,
+      };
+
+  const client = new WeworkClient(clientOptions);
 
   const qr = await client.post("/login/get_login_qrcode", {
     guid,

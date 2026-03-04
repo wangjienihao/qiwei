@@ -18,7 +18,8 @@
     "sync:endpoints": "node scripts/sync-endpoints.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
-    "example": "tsx examples/login-and-send-text.ts"
+    "example": "tsx examples/login-and-send-text.ts",
+    "example:profile": "tsx examples/get-profile-guid-request.ts"
   },
   "repository": {
     "type": "git",
